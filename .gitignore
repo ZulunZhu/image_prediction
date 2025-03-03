@@ -19,6 +19,7 @@ downloads/
 eggs/
 .eggs/
 lib/
+
 lib64/
 parts/
 sdist/
@@ -113,3 +114,4 @@ saved_results/*/*
 logs/*/*
 saved_models/*/*
 saved_labeled_node_interaction_indices/*
+image_data/*
