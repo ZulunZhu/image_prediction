@@ -21,7 +21,7 @@ from models.DyGFormer import DyGFormer
 from models.modules import MergeLayer
 from utils.utils import set_random_seed, convert_to_gpu, get_parameter_sizes, create_optimizer
 from utils.utils import get_neighbor_sampler, NegativeEdgeSampler
-from evaluate_models_utils import evaluate_model_link_prediction
+from evaluate_models_utils import evaluate_model_link_prediction,evaluate_image_link_prediction
 from utils.DataLoader import get_idx_data_loader, get_link_prediction_tgb_data, get_link_prediction_image_data
 from utils.EarlyStopping import EarlyStopping
 from utils.load_configs import get_link_prediction_args
@@ -46,8 +46,8 @@ if __name__ == "__main__":
                                                  time_scaling_factor=args.time_scaling_factor, seed=1)
 
     # initialize train negative sampler
-    train_neg_edge_sampler = NegativeEdgeSampler(src_node_ids=train_data.src_node_ids, dst_node_ids=train_data.dst_node_ids)
-
+    # train_neg_edge_sampler = NegativeEdgeSampler(src_node_ids=train_data.src_node_ids, dst_node_ids=train_data.dst_node_ids)
+    
     # get data loaders
     train_idx_data_loader = get_idx_data_loader(indices_list=list(range(len(train_data.src_node_ids))), batch_size=args.batch_size, shuffle=False)
     # since the version 2 of tgbl-wiki has included all possible negative destinations for each positive edge, we set batch size to 1 to reduce the memory cost
@@ -90,7 +90,7 @@ if __name__ == "__main__":
         logger.info(f"********** Run {run + 1} starts. **********")
 
         logger.info(f'configuration is {args}')
-
+        
         # create model
         if args.model_name == 'TGAT':
             dynamic_backbone = TGAT(node_raw_features=node_raw_features, edge_raw_features=edge_raw_features, neighbor_sampler=train_neighbor_sampler,
@@ -162,8 +162,8 @@ if __name__ == "__main__":
                     train_data.src_node_ids[train_data_indices], train_data.dst_node_ids[train_data_indices], \
                     train_data.node_interact_times[train_data_indices], train_data.edge_ids[train_data_indices]
 
-                _, batch_neg_dst_node_ids = train_neg_edge_sampler.sample(size=len(batch_src_node_ids))
-                batch_neg_src_node_ids = batch_src_node_ids
+                # _, batch_neg_dst_node_ids = train_neg_edge_sampler.sample(size=len(batch_src_node_ids))
+                # batch_neg_src_node_ids = batch_src_node_ids
 
                 # we need to compute for positive and negative edges respectively, because the new sampling strategy (for evaluation) allows the negative source nodes to be
                 # different from the source nodes, this is different from previous works that just replace destination nodes with negative destination nodes
@@ -178,23 +178,23 @@ if __name__ == "__main__":
 
                     # get temporal embedding of negative source and negative destination nodes
                     # two Tensors, with shape (batch_size, output_dim)
-                    batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
-                        model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
-                                                                          dst_node_ids=batch_neg_dst_node_ids,
-                                                                          node_interact_times=batch_node_interact_times,
-                                                                          num_neighbors=args.num_neighbors)
+                    # batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
+                    #     model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
+                    #                                                       dst_node_ids=batch_neg_dst_node_ids,
+                    #                                                       node_interact_times=batch_node_interact_times,
+                    #                                                       num_neighbors=args.num_neighbors)
                 elif args.model_name in ['JODIE', 'DyRep', 'TGN']:
                     # note that negative nodes do not change the memories while the positive nodes change the memories,
                     # we need to first compute the embeddings of negative nodes for memory-based models
                     # get temporal embedding of negative source and negative destination nodes
                     # two Tensors, with shape (batch_size, output_dim)
-                    batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
-                        model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
-                                                                          dst_node_ids=batch_neg_dst_node_ids,
-                                                                          node_interact_times=batch_node_interact_times,
-                                                                          edge_ids=None,
-                                                                          edges_are_positive=False,
-                                                                          num_neighbors=args.num_neighbors)
+                    # batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
+                    #     model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
+                    #                                                       dst_node_ids=batch_neg_dst_node_ids,
+                    #                                                       node_interact_times=batch_node_interact_times,
+                    #                                                       edge_ids=None,
+                    #                                                       edges_are_positive=False,
+                    #                                                       num_neighbors=args.num_neighbors)
 
                     # get temporal embedding of source and destination nodes
                     # two Tensors, with shape (batch_size, output_dim)
@@ -216,13 +216,13 @@ if __name__ == "__main__":
                                                                           time_gap=args.time_gap)
 
                     # get temporal embedding of negative source and negative destination nodes
-                    # two Tensors, with shape (batch_size, output_dim)
-                    batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
-                        model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
-                                                                          dst_node_ids=batch_neg_dst_node_ids,
-                                                                          node_interact_times=batch_node_interact_times,
-                                                                          num_neighbors=args.num_neighbors,
-                                                                          time_gap=args.time_gap)
+                    # # two Tensors, with shape (batch_size, output_dim)
+                    # batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
+                    #     model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
+                    #                                                       dst_node_ids=batch_neg_dst_node_ids,
+                    #                                                       node_interact_times=batch_node_interact_times,
+                    #                                                       num_neighbors=args.num_neighbors,
+                    #                                                       time_gap=args.time_gap)
                 elif args.model_name in ['DyGFormer']:
                     # get temporal embedding of source and destination nodes
                     # two Tensors, with shape (batch_size, output_dim)
@@ -233,10 +233,10 @@ if __name__ == "__main__":
 
                     # get temporal embedding of negative source and negative destination nodes
                     # two Tensors, with shape (batch_size, output_dim)
-                    batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
-                        model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
-                                                                          dst_node_ids=batch_neg_dst_node_ids,
-                                                                          node_interact_times=batch_node_interact_times)
+                    # batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
+                    #     model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
+                    #                                                       dst_node_ids=batch_neg_dst_node_ids,
+                    #                                                       node_interact_times=batch_node_interact_times)
                 else:
                     raise ValueError(f"Wrong value for model_name {args.model_name}!")
                 # get positive and negative probabilities, shape (batch_size, )
@@ -249,11 +249,13 @@ if __name__ == "__main__":
                 # loss = loss_func(input=predicts, target=labels)
 
                 #Get the mae loss
+                
                 # Get the predicted edge feature (without applying sigmoid, as we're doing regression)
                 predicted_edge_feature = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings)
-
+                print("predicted_edge_feature.shape", predicted_edge_feature.shape)
+                print("edge_raw_features[train_data_indices]", edge_raw_features[train_data_indices].shape)
                 # Compute the MAE (L1 loss) between the predicted edge feature and the ground truth edge feature.
-                loss = torch.nn.functional.l1_loss(predicted_edge_feature, edge_raw_features[train_data_indices])
+                loss = torch.nn.functional.l1_loss(predicted_edge_feature, torch.tensor(edge_raw_features[train_data_indices], dtype=torch.float32, device = args.device))
 
             
                 train_losses.append(loss.item())
@@ -270,15 +272,15 @@ if __name__ == "__main__":
                     # detach the memories and raw messages of nodes in the memory bank after each batch, so we don't back propagate to the start of time
                     model[0].memory_bank.detach_memory_bank()
 
-            val_metrics = evaluate_model_link_prediction(model_name=args.model_name,
+            val_metrics = evaluate_image_link_prediction(model_name=args.model_name,
                                                          model=model,
                                                          neighbor_sampler=full_neighbor_sampler,
                                                          evaluate_idx_data_loader=val_idx_data_loader,
-                                                         evaluate_neg_edge_sampler=eval_neg_edge_sampler,
                                                          evaluate_data=val_data,
                                                          eval_stage='val',
                                                          eval_metric_name=eval_metric_name,
                                                          evaluator=evaluator,
+                                                         edge_raw_features = edge_raw_features,
                                                          num_neighbors=args.num_neighbors,
                                                          time_gap=args.time_gap)
 
@@ -294,15 +296,15 @@ if __name__ == "__main__":
 
             # perform testing once after test_interval_epochs
             if (epoch + 1) % args.test_interval_epochs == 0:
-                test_metrics = evaluate_model_link_prediction(model_name=args.model_name,
+                test_metrics = evaluate_image_link_prediction(model_name=args.model_name,
                                                               model=model,
                                                               neighbor_sampler=full_neighbor_sampler,
                                                               evaluate_idx_data_loader=test_idx_data_loader,
-                                                              evaluate_neg_edge_sampler=eval_neg_edge_sampler,
                                                               evaluate_data=test_data,
                                                               eval_stage='test',
                                                               eval_metric_name=eval_metric_name,
                                                               evaluator=evaluator,
+                                                              edge_raw_features = edge_raw_features,
                                                               num_neighbors=args.num_neighbors,
                                                               time_gap=args.time_gap)
 

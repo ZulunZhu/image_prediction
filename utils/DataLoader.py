@@ -5,7 +5,7 @@ from tqdm import tqdm
 from torch.utils.data import Dataset, DataLoader
 from tgb.linkproppred.dataset import LinkPropPredDataset
 from tgb.nodeproppred.dataset_pyg import PyGNodePropPredDataset
-
+from tgb.linkproppred.negative_sampler import NegativeEdgeSampler
 
 class CustomizedDataset(Dataset):
     def __init__(self, indices_list: list):
@@ -159,7 +159,11 @@ def get_link_prediction_image_data(dataset_name: str):
     test_mask[val_end:] = True
 
     # (There is no negative sampler available in this case.)
-    eval_neg_edge_sampler = None
+    eval_neg_edge_sampler = NegativeEdgeSampler(
+                dataset_name=self.name,
+                first_dst_id=self.min_dst_idx,
+                last_dst_id=self.max_dst_idx,
+            )
     eval_metric_name = "AUC"
 
     # # Check feature dimensions (use the same MAX_FEAT_DIM as in the original code).
