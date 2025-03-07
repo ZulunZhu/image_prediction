@@ -8,6 +8,8 @@ import time
 import argparse
 import os
 import json
+import matplotlib.pyplot as plt
+from skimage.exposure import match_histograms
 from collections import defaultdict
 from tgb.linkproppred.negative_sampler import NegativeEdgeSampler
 from tgb.linkproppred.evaluate import Evaluator as LinkPredictionEvaluator
@@ -22,8 +24,7 @@ from utils.DataLoader import Data
 
 
 
-def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_sampler: NeighborSampler, evaluate_idx_data_loader: DataLoader,
-                                   evaluate_neg_edge_sampler: NegativeEdgeSampler, evaluate_data: Data, eval_stage: str,
+def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_sampler: NeighborSampler, evaluate_idx_data_loader: DataLoader, evaluate_data: Data, eval_stage: str,
                                    eval_metric_name: str, evaluator: LinkPredictionEvaluator, edge_raw_features: np.ndarray, num_neighbors: int = 20, time_gap: int = 2000):
     """
     evaluate models on the link prediction task
@@ -52,6 +53,8 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
         evaluate_idx_data_loader_tqdm = tqdm(evaluate_idx_data_loader, ncols=120)
         for batch_idx, evaluate_data_indices in enumerate(evaluate_idx_data_loader_tqdm):
             evaluate_data_indices = evaluate_data_indices.numpy()
+            # print("evaluate_data.src_node_ids[evaluate_data_indices]", evaluate_data.src_node_ids[evaluate_data_indices])
+            # exit(0)
             batch_src_node_ids, batch_dst_node_ids, batch_node_interact_times, batch_edge_ids = \
                 evaluate_data.src_node_ids[evaluate_data_indices],  evaluate_data.dst_node_ids[evaluate_data_indices], \
                 evaluate_data.node_interact_times[evaluate_data_indices], evaluate_data.edge_ids[evaluate_data_indices]
@@ -105,19 +108,112 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
             # get positive probabilities, Tensor, shape (batch_size, )
             positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).sigmoid().cpu().numpy()
             # get negative probabilities, Tensor, shape (batch_size * num_negative_samples_per_node, )
-            
+            # print("positive_probabilities", positive_probabilities.shape)
+            # print("edge_raw_features[evaluate_data_indices]", edge_raw_features[evaluate_data_indices].shape)
+           # Assuming positive_probabilities is already a NumPy array
+            loss = np.mean(np.abs(positive_probabilities - edge_raw_features[evaluate_data_indices]))
 
-            for sample_idx in range(len(batch_src_node_ids)):
-                # compute metric
-                input_dict = {
-                    # use slices instead of index to keep the dimension of y_pred_pos
-                    "y_pred_pos": positive_probabilities[sample_idx: sample_idx + 1],
-                    "eval_metric": [eval_metric_name],
-                }
-                loss = torch.nn.functional.l1_loss(positive_probabilities[sample_idx: sample_idx + 1], torch.tensor(edge_raw_features[sample_idx: sample_idx + 1], dtype=torch.float32))
 
-                evaluate_metrics.append({eval_metric_name: evaluator.eval(input_dict)[eval_metric_name]})
+            # for sample_idx in range(len(batch_src_node_ids)):
+            #     # compute metric
+            #     input_dict = {
+            #         # use slices instead of index to keep the dimension of y_pred_pos
+            #         "y_pred_pos": positive_probabilities[sample_idx: sample_idx + 1],
+            #         "eval_metric": [eval_metric_name],
+            #     }
+            #     print("positive_probabilities[sample_idx: sample_idx + 1]", positive_probabilities[sample_idx: sample_idx + 1].shape)
+            #     print("edge_raw_features[sample_idx: sample_idx + 1]", edge_raw_features[sample_idx: sample_idx + 1].shape)
+            #     loss = torch.nn.functional.l1_loss(positive_probabilities[sample_idx: sample_idx + 1], torch.tensor(edge_raw_features[sample_idx: sample_idx + 1], dtype=torch.float32))
 
+            evaluate_metrics.append({f'{eval_stage} MAE loss': loss})
+            if eval_stage == "test_end":
+                # Create the output folder if it doesn't exist.
+                result_folder = os.path.join(os.getcwd(), "image_result")
+                if not os.path.exists(result_folder):
+                    os.makedirs(result_folder)
+
+                # Assume:
+                #   positive_probabilities: tensor of shape [n, L] (predicted embedding)
+                #   ground_truth: tensor of shape [n, L] from edge_raw_features[evaluate_data_indices]
+                pred_embeddings = positive_probabilities  # shape: (n, L)
+                gt_embeddings = edge_raw_features[evaluate_data_indices]  # shape: (n, L)
+
+                n, L = pred_embeddings.shape
+                # Compute an approximate 2D shape for each flattened embedding.
+                H = int(np.floor(np.sqrt(L)))
+                W = int(np.ceil(L / H))
+
+                def reshape_to_2d(flat_sample, H, W):
+                    """
+                    Pads the flattened sample if needed, reshapes it into a 2D array.
+                    We do not normalize here; we rely on histogram matching later.
+                    """
+                    total_pixels = H * W
+                    pad_size = total_pixels - flat_sample.shape[0]
+                    if pad_size > 0:
+                        flat_sample = np.pad(flat_sample, (0, pad_size), mode='constant', constant_values=0)
+                    return flat_sample.reshape(H, W)
+
+                def highlight_differences(pred_img, gt_img, threshold=30):
+                    """
+                    pred_img and gt_img should be 2D uint8 arrays of the same shape.
+                    This function highlights pixels in pred_img that differ from gt_img by more than 'threshold'
+                    in red. Returns an RGB array.
+                    """
+                    diff = np.abs(pred_img.astype(np.int16) - gt_img.astype(np.int16))
+                    # Convert the predicted image to RGB.
+                    rgb = np.stack([pred_img, pred_img, pred_img], axis=-1)
+                    mask = diff > threshold
+                    rgb[mask] = np.array([255, 0, 0], dtype=np.uint8)
+                    return rgb
+
+                for i in range(n):
+                    # Reshape ground truth and prediction into 2D.
+                    gt_2d = reshape_to_2d(gt_embeddings[i], H, W)
+                    pred_2d = reshape_to_2d(pred_embeddings[i], H, W)
+
+                    # Step 1: Convert both to float64 for histogram matching
+                    gt_2d_float = gt_2d.astype(np.float64)
+                    pred_2d_float = pred_2d.astype(np.float64)
+
+                    # Step 2: Match the histogram of pred to gt to align brightness/contrast.
+                    # 'multichannel=False' because we are dealing with a single channel (grayscale).
+                    pred_matched = match_histograms(pred_2d_float, gt_2d_float)
+
+                    # Step 3: Normalize both images to [0, 255] for display.
+                    # We'll combine them to find a common min/max so they remain visually comparable.
+                    combined_min = min(gt_2d_float.min(), pred_matched.min())
+                    combined_max = max(gt_2d_float.max(), pred_matched.max())
+                    combined_range = combined_max - combined_min + 1e-8
+
+                    gt_norm = ((gt_2d_float - combined_min) / combined_range * 255).astype(np.uint8)
+                    pred_norm = ((pred_matched - combined_min) / combined_range * 255).astype(np.uint8)
+
+                    # Step 4: Compute the difference image.
+                    diff_img = highlight_differences(pred_norm, gt_norm, threshold=50)
+
+                    # Step 5: Create a figure with 1 row and 3 columns.
+                    fig, axs = plt.subplots(1, 3, figsize=(12, 4))
+                    axs[0].imshow(gt_norm, cmap='gray')
+                    axs[0].set_title("Ground Truth")
+                    axs[0].axis('off')
+
+                    axs[1].imshow(pred_norm, cmap='gray')
+                    axs[1].set_title("Predicted (Hist Matched)")
+                    axs[1].axis('off')
+
+                    axs[2].imshow(diff_img)
+                    axs[2].set_title("Differences (Red)")
+                    axs[2].axis('off')
+
+                    plt.tight_layout()
+
+                    # Save the figure
+                    save_path = os.path.join(result_folder, f"comparison_{i}.png")
+                    plt.savefig(save_path)
+                    plt.close(fig)
+                    print(f"Saved comparison figure for sample {i} to {save_path}")
+                
             evaluate_idx_data_loader_tqdm.set_description(f'{eval_stage} for the {batch_idx + 1}-th batch')
 
     return evaluate_metrics

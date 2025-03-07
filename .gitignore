@@ -115,3 +115,4 @@ logs/*/*
 saved_models/*/*
 saved_labeled_node_interaction_indices/*
 image_data/*
+image_result/*

@@ -128,14 +128,12 @@ def get_link_prediction_image_data(dataset_name: str):
     node_raw_features = np.vstack([np.zeros((1, node_raw_features.shape[1])), node_raw_features])
     edge_raw_features = np.vstack([np.zeros((1, edge_raw_features.shape[1])), edge_raw_features])
 
-    # Adjust node IDs: add 1 so that 0 remains the padding.
-    src_node_ids = src_node_ids + 1
-    dst_node_ids = dst_node_ids + 1
+   
     # Create edge IDs starting from 1 (since index 0 is the padded edge).
     edge_ids = np.arange(1, num_edges + 1, dtype=np.int64)
 
-    # For edge timestamps, we use the destination node id as a proxy for time
-    node_interact_times = dst_node_ids.astype(np.float64)
+    # For edge timestamps, we use the source node id as a proxy for time
+    node_interact_times = src_node_ids.astype(np.float64)
 
     # All observed edges are positive (label 1).
     labels = np.ones_like(src_node_ids, dtype=np.int64)
@@ -159,11 +157,7 @@ def get_link_prediction_image_data(dataset_name: str):
     test_mask[val_end:] = True
 
     # (There is no negative sampler available in this case.)
-    eval_neg_edge_sampler = NegativeEdgeSampler(
-                dataset_name=self.name,
-                first_dst_id=self.min_dst_idx,
-                last_dst_id=self.max_dst_idx,
-            )
+    eval_neg_edge_sampler = None
     eval_metric_name = "AUC"
 
     # # Check feature dimensions (use the same MAX_FEAT_DIM as in the original code).

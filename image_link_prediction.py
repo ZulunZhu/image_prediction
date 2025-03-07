@@ -47,13 +47,15 @@ if __name__ == "__main__":
 
     # initialize train negative sampler
     # train_neg_edge_sampler = NegativeEdgeSampler(src_node_ids=train_data.src_node_ids, dst_node_ids=train_data.dst_node_ids)
-    
+    print("test_data.src_node_ids", test_data.src_node_ids)
+    print("test_data.src_node_ids", test_data.dst_node_ids)
+    # exit(0)
     # get data loaders
     train_idx_data_loader = get_idx_data_loader(indices_list=list(range(len(train_data.src_node_ids))), batch_size=args.batch_size, shuffle=False)
     # since the version 2 of tgbl-wiki has included all possible negative destinations for each positive edge, we set batch size to 1 to reduce the memory cost
     if args.dataset_name == "tgbl-wiki":
-        val_idx_data_loader = get_idx_data_loader(indices_list=list(range(len(val_data.src_node_ids))), batch_size=1, shuffle=False)
-        test_idx_data_loader = get_idx_data_loader(indices_list=list(range(len(test_data.src_node_ids))), batch_size=1, shuffle=False)
+        val_idx_data_loader = get_idx_data_loader(indices_list=list(range(len(val_data.src_node_ids))), batch_size=args.batch_size, shuffle=False)
+        test_idx_data_loader = get_idx_data_loader(indices_list=list(range(len(test_data.src_node_ids))), batch_size=args.batch_size, shuffle=False)
     else:
         val_idx_data_loader = get_idx_data_loader(indices_list=list(range(len(val_data.src_node_ids))), batch_size=args.batch_size, shuffle=False)
         test_idx_data_loader = get_idx_data_loader(indices_list=list(range(len(test_data.src_node_ids))), batch_size=args.batch_size, shuffle=False)
@@ -155,7 +157,7 @@ if __name__ == "__main__":
 
             # store train losses and metrics
             train_losses, train_metrics = [], []
-            train_idx_data_loader_tqdm = tqdm(train_idx_data_loader, ncols=120)
+            train_idx_data_loader_tqdm = tqdm(train_idx_data_loader, ncols=120, dynamic_ncols=True)
             for batch_idx, train_data_indices in enumerate(train_idx_data_loader_tqdm):
                 train_data_indices = train_data_indices.numpy()
                 batch_src_node_ids, batch_dst_node_ids, batch_node_interact_times, batch_edge_ids = \
@@ -252,20 +254,20 @@ if __name__ == "__main__":
                 
                 # Get the predicted edge feature (without applying sigmoid, as we're doing regression)
                 predicted_edge_feature = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings)
-                print("predicted_edge_feature.shape", predicted_edge_feature.shape)
-                print("edge_raw_features[train_data_indices]", edge_raw_features[train_data_indices].shape)
+                # print("predicted_edge_feature.shape", predicted_edge_feature.shape)
+                # print("edge_raw_features[train_data_indices]", edge_raw_features[train_data_indices].shape)
                 # Compute the MAE (L1 loss) between the predicted edge feature and the ground truth edge feature.
                 loss = torch.nn.functional.l1_loss(predicted_edge_feature, torch.tensor(edge_raw_features[train_data_indices], dtype=torch.float32, device = args.device))
 
             
                 train_losses.append(loss.item())
 
-                train_metrics.append({'Current MAE loss': loss.item()})
+                train_metrics.append({'Training MAE loss': loss.item()})
 
                 optimizer.zero_grad()
                 loss.backward()
                 optimizer.step()
-
+                sys.stdout.flush()
                 train_idx_data_loader_tqdm.set_description(f'Epoch: {epoch + 1}, train for the {batch_idx + 1}-th batch, train loss: {loss.item()}')
 
                 if args.model_name in ['JODIE', 'DyRep', 'TGN']:
@@ -331,32 +333,20 @@ if __name__ == "__main__":
         # evaluate the best model
         logger.info(f'get final performance on dataset {args.dataset_name}...')
 
-        # the saved best model of memory-based models cannot perform validation since the stored memory has been updated by validation data
-        if args.model_name not in ['JODIE', 'DyRep', 'TGN']:
-            val_metrics = evaluate_model_link_prediction(model_name=args.model_name,
-                                                         model=model,
-                                                         neighbor_sampler=full_neighbor_sampler,
-                                                         evaluate_idx_data_loader=val_idx_data_loader,
-                                                         evaluate_neg_edge_sampler=eval_neg_edge_sampler,
-                                                         evaluate_data=val_data,
-                                                         eval_stage='val',
-                                                         eval_metric_name=eval_metric_name,
-                                                         evaluator=evaluator,
-                                                         num_neighbors=args.num_neighbors,
-                                                         time_gap=args.time_gap)
+       
 
-        test_metrics = evaluate_model_link_prediction(model_name=args.model_name,
-                                                      model=model,
-                                                      neighbor_sampler=full_neighbor_sampler,
-                                                      evaluate_idx_data_loader=test_idx_data_loader,
-                                                      evaluate_neg_edge_sampler=eval_neg_edge_sampler,
-                                                      evaluate_data=test_data,
-                                                      eval_stage='test',
-                                                      eval_metric_name=eval_metric_name,
-                                                      evaluator=evaluator,
-                                                      num_neighbors=args.num_neighbors,
-                                                      time_gap=args.time_gap)
-
+        test_metrics = evaluate_image_link_prediction(model_name=args.model_name,
+                                                    model=model,
+                                                    neighbor_sampler=full_neighbor_sampler,
+                                                    evaluate_idx_data_loader=test_idx_data_loader,
+                                                    evaluate_data=test_data,
+                                                    eval_stage='test_end',
+                                                    eval_metric_name=eval_metric_name,
+                                                    evaluator=evaluator,
+                                                    edge_raw_features = edge_raw_features,
+                                                    num_neighbors=args.num_neighbors,
+                                                    time_gap=args.time_gap)
+        exit(0)
         # store the evaluation metrics at the current run
         val_metric_dict, test_metric_dict = {}, {}
 
