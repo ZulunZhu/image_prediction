@@ -211,8 +211,8 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
                     plt.tight_layout()
 
                     # Save the result
-                    np.save(os.path.join(result_folder, f"gt_{i}.png"), gt_2d)   # For checking only, to disable 
-                    np.save(os.path.join(result_folder, f"pred_{i}.png"), pred_2d)
+                    np.save(os.path.join(result_folder, f"gt_{i}.npy"), gt_2d)   # For checking only, to disable 
+                    np.save(os.path.join(result_folder, f"pred_{i}.npy"), pred_2d)
 
                     # Save the figure
                     save_path = os.path.join(result_folder, f"comparison_{i}.png")

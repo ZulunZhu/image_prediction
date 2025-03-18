@@ -64,6 +64,9 @@ def computePatches(image_width, image_length, patch_size, patch_overlap):
             patchList.append([start_width, start_width + patch_size, image_length - patch_size, image_length])
     if (image_width - patch_size) % step_width != 0 and (image_length - patch_size) % step_length != 0:
         patchList.append([image_width - patch_size, image_width, image_length - patch_size, image_length])
+    print("Total image width: ", image_width)
+    print("Total image width: ", image_length)
+    print("Number of patches: ", np.shape(patchList)[0])
     return patchList
 
 
