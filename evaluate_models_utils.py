@@ -110,7 +110,7 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
             # get negative probabilities, Tensor, shape (batch_size * num_negative_samples_per_node, )
             # print("positive_probabilities", positive_probabilities.shape)
             # print("edge_raw_features[evaluate_data_indices]", edge_raw_features[evaluate_data_indices].shape)
-           # Assuming positive_probabilities is already a NumPy array
+            # Assuming positive_probabilities is already a NumPy array
             loss = np.mean(np.abs(positive_probabilities - edge_raw_features[evaluate_data_indices]))
 
 
@@ -172,33 +172,35 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
                     gt_2d = reshape_to_2d(gt_embeddings[i], H, W)
                     pred_2d = reshape_to_2d(pred_embeddings[i], H, W)
 
+                    # CT: I think coherence values shouldn't be adjusted, they should be treated as it is because darker/lower or brighter/higher coherences have different meanings
+
                     # Step 1: Convert both to float64 for histogram matching
-                    gt_2d_float = gt_2d.astype(np.float64)
-                    pred_2d_float = pred_2d.astype(np.float64)
+                    # gt_2d_float = gt_2d.astype(np.float64)
+                    # pred_2d_float = pred_2d.astype(np.float64) 
 
                     # Step 2: Match the histogram of pred to gt to align brightness/contrast.
                     # 'multichannel=False' because we are dealing with a single channel (grayscale).
-                    pred_matched = match_histograms(pred_2d_float, gt_2d_float)
+                    # pred_matched = match_histograms(pred_2d_float, gt_2d_float)    
 
                     # Step 3: Normalize both images to [0, 255] for display.
                     # We'll combine them to find a common min/max so they remain visually comparable.
-                    combined_min = min(gt_2d_float.min(), pred_matched.min())
-                    combined_max = max(gt_2d_float.max(), pred_matched.max())
-                    combined_range = combined_max - combined_min + 1e-8
+                    # combined_min = min(gt_2d_float.min(), pred_matched.min())
+                    # combined_max = max(gt_2d_float.max(), pred_matched.max())
+                    # combined_range = combined_max - combined_min + 1e-8
 
-                    gt_norm = ((gt_2d_float - combined_min) / combined_range * 255).astype(np.uint8)
-                    pred_norm = ((pred_matched - combined_min) / combined_range * 255).astype(np.uint8)
+                    # gt_norm = ((gt_2d_float - combined_min) / combined_range * 255).astype(np.uint8)
+                    # pred_norm = ((pred_matched - combined_min) / combined_range * 255).astype(np.uint8)
 
                     # Step 4: Compute the difference image.
-                    diff_img = highlight_differences(pred_norm, gt_norm, threshold=50)
+                    diff_img = highlight_differences(pred_2d, gt_2d, threshold=0.2)
 
                     # Step 5: Create a figure with 1 row and 3 columns.
                     fig, axs = plt.subplots(1, 3, figsize=(12, 4))
-                    axs[0].imshow(gt_norm, cmap='gray')
+                    axs[0].imshow(gt_2d, cmap='gray', vmin=0, vmax=1)
                     axs[0].set_title("Ground Truth")
                     axs[0].axis('off')
 
-                    axs[1].imshow(pred_norm, cmap='gray')
+                    axs[1].imshow(pred_2d, cmap='gray', vmin=0, vmax=1)
                     axs[1].set_title("Predicted (Hist Matched)")
                     axs[1].axis('off')
 
@@ -207,6 +209,10 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
                     axs[2].axis('off')
 
                     plt.tight_layout()
+
+                    # Save the result
+                    np.save(os.path.join(result_folder, f"gt_{i}.png"), gt_2d)   # For checking only, to disable 
+                    np.save(os.path.join(result_folder, f"pred_{i}.png"), pred_2d)
 
                     # Save the figure
                     save_path = os.path.join(result_folder, f"comparison_{i}.png")
