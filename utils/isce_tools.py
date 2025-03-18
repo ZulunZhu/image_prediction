@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 
 
 def readAmp(file,bbox):
-    # To-do for Cheryl: optimise reading binary file using bytes to avoid reading whole image into memory
+    # TO-DO for CT: optimise reading binary file using bytes to avoid reading whole image into memory
     width, length = sizeFromXml(file)
     with open(file, 'rb') as f:
         data = np.fromfile(f, dtype='<f4')
@@ -15,15 +15,15 @@ def readAmp(file,bbox):
     amp1 = amp1[bbox[0]:bbox[1], bbox[2]:bbox[3]]
     amp2 = amp2[bbox[0]:bbox[1], bbox[2]:bbox[3]]
     # Optionally disable plotting for batch processing
-    plt.imshow(amp1, cmap='gray', vmin=0, vmax=5)
-    plt.colorbar(); plt.title("Amplitude 1"); plt.show()
-    plt.imshow(amp2, cmap='gray', vmin=0, vmax=5)
-    plt.colorbar(); plt.title("Amplitude 2"); plt.show()
+    # plt.imshow(amp1, cmap='gray', vmin=0, vmax=5)
+    # plt.colorbar(); plt.title("Amplitude 1"); plt.show()
+    # plt.imshow(amp2, cmap='gray', vmin=0, vmax=5)
+    # plt.colorbar(); plt.title("Amplitude 2"); plt.show()
     return amp1, amp2
 
 
 def readCor(file,bbox):
-    # To-do for Cheryl: optimise reading binary file using bytes to avoid reading whole image into memory
+    # TO-DO for CT: optimise reading binary file using bytes to avoid reading whole image into memory
     width, length = sizeFromXml(file)
     with open(file, 'rb') as f:
         data = np.fromfile(f, dtype=np.float32)
@@ -32,8 +32,8 @@ def readCor(file,bbox):
         cor = data2[1::2, :]
     cor = cor[bbox[0]:bbox[1], bbox[2]:bbox[3]]
     # Optionally disable plotting for batch processing
-    plt.imshow(cor, cmap='gray', vmin=0, vmax=5)
-    plt.colorbar(); plt.title("Cor 2"); plt.show()
+    # plt.imshow(cor, cmap='gray', vmin=0, vmax=5)
+    # plt.colorbar(); plt.title("Cor 2"); plt.show()
     return cor
 
 
