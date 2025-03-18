@@ -38,6 +38,7 @@ if __name__ == "__main__":
     args = get_link_prediction_args(is_evaluation=False)
     
     # get list bounding boxes for each patch
+    sys.setrecursionlimit(100000)  # Increase recursion limit to avoid crashes
     sub_dir = [d for d in os.listdir(data_dir) if d.startswith("cor_") and os.path.isdir(os.path.join(data_dir, d))]
     width, length = sizeFromXml(os.path.join(data_dir, sub_dir[0], "b01_16r4alks.cor"))   # Get size of full image
     patchList = computePatches(width, length, args.patch_size, args.patch_overlap)   # Get list of bounding boxes for each patch
