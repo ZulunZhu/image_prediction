@@ -53,8 +53,8 @@ def computePatches(image_x, image_y, patch_length, patch_overlap):
     step_x = patch_length - patch_overlap
     step_y = patch_length - patch_overlap
     # Define patches for normal area
-    for start_y in range(0, image_y - patch_length + 1, step_y):  # Iterate over y first
-        for start_x in range(0, image_x - patch_length + 1, step_x):  # Iterate over x inside y-loop
+    for start_x in range(0, image_x - patch_length + 1, step_x):  # Iterate over x first
+        for start_y in range(0, image_y - patch_length + 1, step_y):  # Iterate over y inside x-loop
             patchList.append([start_x, start_x + patch_length - 1, start_y, start_y + patch_length - 1])
     # Handle the right edge (x-axis)
     if (image_x - patch_length) % step_x != 0:
