@@ -52,9 +52,9 @@ def computePatches(image_x, image_y, patch_length, patch_overlap):
     # Compute step sizes
     step_x = patch_length - patch_overlap
     step_y = patch_length - patch_overlap
-    # Define patches for normal area
-    for start_x in range(0, image_x - patch_length + 1, step_x):  # Iterate over x first
-        for start_y in range(0, image_y - patch_length + 1, step_y):  # Iterate over y inside x-loop
+    # Define patches for normal area (row-major order)
+    for start_y in range(0, image_y - patch_length + 1, step_y):  # Iterate over y first (rows)
+        for start_x in range(0, image_x - patch_length + 1, step_x):  # Iterate over x inside y-loop (columns)
             patchList.append([start_x, start_x + patch_length - 1, start_y, start_y + patch_length - 1])
     # Handle the right edge (x-axis)
     if (image_x - patch_length) % step_x != 0:
@@ -67,6 +67,7 @@ def computePatches(image_x, image_y, patch_length, patch_overlap):
     # Handle the bottom-right corner
     if (image_x - patch_length) % step_x != 0 and (image_y - patch_length) % step_y != 0:
         patchList.append([image_x - patch_length, image_x - 1, image_y - patch_length, image_y - 1])
+    
     print("Total image width (x-axis): ", image_x)
     print("Total image height (y-axis): ", image_y) 
     print("Number of patches: ", len(patchList)) 
