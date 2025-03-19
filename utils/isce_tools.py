@@ -12,8 +12,8 @@ def readAmp(file,bbox):
         data2 = data.reshape([length, width * 2])
         amp1 = data2[:, ::2]
         amp2 = data2[:, 1::2]
-    amp1 = amp1[bbox[0]:bbox[1], bbox[2]:bbox[3]]
-    amp2 = amp2[bbox[0]:bbox[1], bbox[2]:bbox[3]]
+    amp1 = amp1[bbox[0]:bbox[1]+1, bbox[2]:bbox[3]+1]
+    amp2 = amp2[bbox[0]:bbox[1]+1, bbox[2]:bbox[3]+1]
     # Optionally disable plotting for batch processing
     # plt.imshow(amp1, cmap='gray', vmin=0, vmax=5)
     # plt.colorbar(); plt.title("Amplitude 1"); plt.show()
@@ -30,7 +30,7 @@ def readCor(file,bbox):
         data2 = data.reshape([length * 2, width])
         # Use the second band (odd rows) as the coherence (edge) feature
         cor = data2[1::2, :]
-    cor = cor[bbox[0]:bbox[1], bbox[2]:bbox[3]]
+    cor = cor[bbox[0]:bbox[1]+1, bbox[2]:bbox[3]+1]
     # Optionally disable plotting for batch processing
     # plt.imshow(cor, cmap='gray', vmin=0, vmax=5)
     # plt.colorbar(); plt.title("Cor 2"); plt.show()
@@ -46,27 +46,31 @@ def sizeFromXml(file):
     return width, length   
 
 
-def computePatches(image_width, image_length, patch_size, patch_overlap):
-    # Compute step sizes
+def computePatches(image_x, image_y, patch_length, patch_overlap):
+    # Initialize the output patchList which will contain a list of patch bounding boxes in the form of [start_x, end_x, start_y, end_y]
     patchList = []
-    step_width = patch_size - patch_overlap
-    step_length = patch_size - patch_overlap
-    # Define patches
-    for start_width in range(0, image_width - patch_size + 1, step_width):
-        for start_length in range(0, image_length - patch_size + 1, step_length):
-            patchList.append([start_width, start_width + patch_size, start_length, start_length + patch_size])
-    # Handle the right and bottom edges
-    if (image_width - patch_size) % step_width != 0:
-        for start_length in range(0, image_length - patch_size + 1, step_length):
-            patchList.append([image_width - patch_size, image_width, start_length, start_length + patch_size])
-    if (image_length - patch_size) % step_length != 0:
-        for start_width in range(0, image_width - patch_size + 1, step_width):
-            patchList.append([start_width, start_width + patch_size, image_length - patch_size, image_length])
-    if (image_width - patch_size) % step_width != 0 and (image_length - patch_size) % step_length != 0:
-        patchList.append([image_width - patch_size, image_width, image_length - patch_size, image_length])
-    print("Total image width: ", image_width)
-    print("Total image width: ", image_length)
-    print("Number of patches: ", np.shape(patchList)[0])
+    # Compute step sizes
+    step_x = patch_length - patch_overlap
+    step_y = patch_length - patch_overlap
+    # Define patches for normal area
+    for start_x in range(0, image_x - patch_length + 1, step_x):
+        for start_y in range(0, image_y - patch_length + 1, step_y):
+            patchList.append([start_x, start_x + patch_length, start_y, start_y + patch_length])
+    # Handle the right edge (x-axis)
+    if (image_x - patch_length) % step_x != 0:
+        for start_y in range(0, image_y - patch_length + 1, step_y):
+            patchList.append([image_x - patch_length, image_x, start_y, start_y + patch_length])
+    # Handle the bottom edge (y-axis)
+    if (image_y - patch_length) % step_y != 0:
+        for start_x in range(0, image_x - patch_length + 1, step_x):
+            patchList.append([start_x, start_x + patch_length, image_y - patch_length, image_y])
+    # Handle the bottom-right corner
+    if (image_x - patch_length) % step_x != 0 and (image_y - patch_length) % step_y != 0:
+        patchList.append([image_x - patch_length, image_x, image_y - patch_length, image_y])
+    print("Total image x (width): ", image_x)
+    print("Total image y (length): ", image_y) 
+    print("Number of patches: ", len(patchList)) 
+    print("Patch bbox: ", patchList)
     return patchList
 
 
@@ -169,3 +173,79 @@ def prepareData(data_in_dir, data_out_dir, bbox, base_filename='b01_16r4alks'):
     # Optionally return the features and mapping information
     return node_features, edge_features, date_to_id, edge_node_pairs
 
+
+def stitchPatch(merged_dir, patch_file, patch_bbox, patch_length, merge_method='mean'):
+    
+    # Patch file to stitch to the merged file
+    patch = np.load(patch_file)   
+
+    # Merged file and initialise for first patch if it doesn't exist
+    merged_img_file = os.path.join(merged_dir, patch_file.replace("pred_", "pred_merged_img_"))
+    merged_wgt_file = os.path.join(merged_dir, patch_file.replace("pred_", "pred_merged_wgt_"))
+    if not os.path.exists(merged_img_file):
+        merged_img = np.zeros((patch_length,patch_length), dtype=np.float32)
+        merged_wgt = np.zeros((patch_length,patch_length), dtype=np.float32)
+        np.save(merged_img_file, merged_img)
+        np.save(merged_wgt_file, merged_wgt)
+    else:
+        merged_img = np.load(merged_img_file)
+        merged_wgt = np.load(merged_wgt_file)   
+    
+    # Get size of existing merged image
+    merged_x, merged_y = np.shape(merged_img)
+
+    # If existing merged image is too small, compute the new required size
+    if patch_bbox[1]+1 > merged_x or patch_bbox[3]+1 > merged_y:
+        new_x = max(merged_x, patch_bbox[1]+1)
+        new_y = max(merged_y, patch_bbox[3]+1)
+        
+        # Create a bigger merged image with the new sizes
+        new_img = np.zeros((new_x, new_y), dtype=np.float32)
+        new_wgt = np.zeros((new_x, new_y), dtype=np.float32)
+        
+        # Copy existing information into the updated merged image
+        new_img[:merged_x, :merged_y] = merged_img
+        new_wgt[:merged_x, :merged_y] = merged_wgt
+        merged_img = new_img
+        merged_wgt = new_wgt
+        merged_x, merged_y = np.shape(merged_img)
+
+    # Stitch patch to the merged image using either mean, min, or max method
+    # TO-DO: median requires storing values of individual patches and can't be implemented sequentially 
+    if merge_method == 'mean':
+        # Add patch to the merged image, track the weight, and apply weighted mean 
+        merged_img[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1] += patch
+        merged_wgt[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1] += 1
+        merged_img /= merged_wgt
+    elif merge_method == 'min' or merge_method == 'max':
+        # Create a dummy merged image populated with the patch only
+        patch_img = np.zeros((merged_x, merged_y), dtype=np.float32)
+        patch_img[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1] = patch
+        # Find non-overlapping region between patch and merged image (mask=1 if weight is still 0, mask=0 if weight is > 0)
+        mask = (merged_wgt == 0)
+        # For non-overlapping region, copy the patch values to the merged image
+        merged_img[mask] = patch_img[mask]
+        # For overlapping region, apply min or max method
+        if merge_method == 'min':
+            merged_img[~mask] = np.minimum(merged_img[~mask], patch_img[~mask])
+        elif merge_method == 'max':
+            merged_img[~mask] = np.maximum(merged_img[~mask], patch_img[~mask])
+    else:
+        raise ValueError("Invalid merge_method. Choose from 'mean', 'min', or 'max'.")
+    
+    # Save the updated merged image and weight
+    np.save(merged_img_file, merged_img)
+    np.save(merged_wgt_file, merged_wgt)
+        
+    # Optionally return the features and mapping information
+    return merged_img, merged_wgt
+
+    # # Calculate overlapping region between patch and merged image 
+    # overlap_x_start = max(patch_bbox[0], 0)
+    # overlap_x_end = min(patch_bbox[1], merged_x-1)
+    # overlap_y_start = max(patch_bbox[2], 0)
+    # overlap_y_end = min(patch_bbox[3], merged_y-1)
+    # # Get region of the image that corresponds to where the patch will be placed
+    # overlap_merged = merged_img[overlap_x_start:overlap_x_end+1, overlap_y_start:overlap_y_end+1]
+    # overlap_patch = patch[overlap_x_start-patch_bbox[0] : overlap_x_end-patch_bbox[0]+1,
+    #                     overlap_y_start-patch_bbox[2] : overlap_y_end-patch_bbox[2]+1]

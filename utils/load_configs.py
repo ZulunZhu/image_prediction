@@ -13,6 +13,8 @@ def get_link_prediction_args(is_evaluation: bool = False):
     parser = argparse.ArgumentParser('Interface for the link prediction task')
     parser.add_argument('--dataset_name', type=str, help='dataset to be used', default='tgbl-wiki',
                         choices=["tgbl-wiki", "tgbl-review", "tgbl-coin", "tgbl-comment", "tgbl-flight"])
+    parser.add_argument('--patch_length', type=int, default=224, help='patch length')
+    parser.add_argument('--patch_overlap', type=int, default=204, help='patch overlap')
     parser.add_argument('--batch_size', type=int, default=20, help='batch size')
     parser.add_argument('--model_name', type=str, default='DyGFormer', help='name of the model, note that EdgeBank is only applicable for evaluation',
                         choices=['JODIE', 'DyRep', 'TGAT', 'TGN', 'CAWN', 'EdgeBank', 'TCL', 'GraphMixer', 'DyGFormer'])
@@ -34,8 +36,7 @@ def get_link_prediction_args(is_evaluation: bool = False):
                         choices=['unlimited_memory', 'time_window_memory', 'repeat_threshold_memory'])
     parser.add_argument('--time_window_mode', type=str, default='fixed_proportion', help='how to select the time window size for time window memory',
                         choices=['fixed_proportion', 'repeat_interval'])
-    parser.add_argument('--patch_size', type=int, default=224, help='patch size')
-    parser.add_argument('--patch_overlap', type=int, default=204, help='patch overlap')
+    parser.add_argument('--patch_size', type=int, default=1, help='patch size for DyGFormer')
     parser.add_argument('--channel_embedding_dim', type=int, default=50, help='dimension of each channel embedding')
     parser.add_argument('--max_input_sequence_length', type=int, default=32, help='maximal length of the input sequence of each node')
     parser.add_argument('--learning_rate', type=float, default=0.0001, help='learning rate')

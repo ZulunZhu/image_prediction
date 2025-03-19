@@ -166,7 +166,7 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
                     mask = diff > threshold
                     rgb[mask] = np.array([255, 0, 0], dtype=np.uint8)
                     return rgb
-
+                
                 for i in range(n):
                     # Reshape ground truth and prediction into 2D.
                     gt_2d = reshape_to_2d(gt_embeddings[i], H, W)
@@ -211,8 +211,8 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
                     plt.tight_layout()
 
                     # Save the result
-                    np.save(os.path.join(result_folder, f"gt_{i}.npy"), gt_2d)   # For checking only, to disable 
-                    np.save(os.path.join(result_folder, f"pred_{i}.npy"), pred_2d)
+                    np.save(os.path.join(result_folder, f"gt_{i:02d}.npy"), gt_2d)   # Save ground truth for checking only, to disable 
+                    np.save(os.path.join(result_folder, f"pred_{i:02d}.npy"), pred_2d)
 
                     # Save the figure
                     save_path = os.path.join(result_folder, f"comparison_{i}.png")

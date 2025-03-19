@@ -19,13 +19,14 @@ from models.TCL import TCL
 from models.GraphMixer import GraphMixer
 from models.DyGFormer import DyGFormer
 from models.modules import MergeLayer
-from utils.isce_tools import sizeFromXml, computePatches, prepareData
+from utils.isce_tools import sizeFromXml, computePatches, prepareData, stitchPatch
 from utils.utils import set_random_seed, convert_to_gpu, get_parameter_sizes, create_optimizer
 from utils.utils import get_neighbor_sampler, NegativeEdgeSampler
 from evaluate_models_utils import evaluate_model_link_prediction,evaluate_image_link_prediction
 from utils.DataLoader import get_idx_data_loader, get_link_prediction_tgb_data, get_link_prediction_image_data
 from utils.EarlyStopping import EarlyStopping
 from utils.load_configs import get_link_prediction_args
+
 
 if __name__ == "__main__":
 
@@ -41,21 +42,26 @@ if __name__ == "__main__":
     sys.setrecursionlimit(100000)  # Increase recursion limit to avoid crashes
     sub_dir = [d for d in os.listdir(data_dir) if d.startswith("cor_") and os.path.isdir(os.path.join(data_dir, d))]
     width, length = sizeFromXml(os.path.join(data_dir, sub_dir[0], "b01_16r4alks.cor"))   # Get size of full image
-    patchList = computePatches(width, length, args.patch_size, args.patch_overlap)   # Get list of bounding boxes for each patch
+    patchList = computePatches(width, length, args.patch_length, args.patch_overlap)   # Get list of bounding boxes for each patch
+
+    # initialize merged image
+    work_dir = os.getcwd()
+    merged_dir = os.path.join(work_dir,'merged')
+    if not os.path.exists(merged_dir):
+            os.makedirs(merged_dir)
 
     # iterate over each patch
-    work_dir = os.getcwd()
     for patch_id, patch_bbox in enumerate(patchList):
 
-        # Create sub-directory for each patch
+        # create sub-directory for the patch
         patch_dir = os.path.join(work_dir,'patch_' + f"{patch_id+1:03d}")
         if not os.path.exists(patch_dir):
             os.makedirs(patch_dir)
 
-        # Process dataset for each patch
+        # process dataset for the patch
         prepareData(data_dir, patch_dir, patch_bbox, base_filename='b01_16r4alks')
 
-        # change directory to the patch directory
+        # go into the patch directory
         os.chdir(patch_dir)
 
         # get data for training, validation and testing
@@ -431,6 +437,11 @@ if __name__ == "__main__":
             logger.info(f'average test {metric_name}, {np.mean([test_metric_single_run[metric_name] for test_metric_single_run in test_metric_all_runs]):.4f} '
                         f'± {np.std([test_metric_single_run[metric_name] for test_metric_single_run in test_metric_all_runs], ddof=1):.4f}')
         
+        # stitch new patch to the merged image for each edge predicted 
+        pred_dir = os.path.join(patch_dir, 'image_result')
+        for pred_file in [f for f in os.listdir(pred_dir) if f.startswith("pred_") and f.endswith(".npy")]:
+            stitchPatch(merged_dir, pred_file, patch_bbox, args.patch_length, merge_method='mean')
+
         os.chdir(work_dir)
 
     sys.exit()
