@@ -191,6 +191,10 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
                     # gt_norm = ((gt_2d_float - combined_min) / combined_range * 255).astype(np.uint8)
                     # pred_norm = ((pred_matched - combined_min) / combined_range * 255).astype(np.uint8)
 
+                    # Save the result
+                    np.save(os.path.join(result_folder, f"gt_{i:02d}.npy"), gt_2d)   # Save ground truth for checking only, optionally disable 
+                    np.save(os.path.join(result_folder, f"pred_{i:02d}.npy"), pred_2d)
+
                     # Step 4: Compute the difference image.
                     diff_img = highlight_differences(pred_2d, gt_2d, threshold=0.2)
 
@@ -210,15 +214,10 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
 
                     plt.tight_layout()
 
-                    # Save the result
-                    np.save(os.path.join(result_folder, f"gt_{i:02d}.npy"), gt_2d)   # Save ground truth for checking only, optionally disable 
-                    np.save(os.path.join(result_folder, f"pred_{i:02d}.npy"), pred_2d)
-
                     # Save the figure
                     save_path = os.path.join(result_folder, f"comparison_{i:02d}.png")
                     plt.savefig(save_path)
                     plt.close(fig)
-
                     print(f"Saved prediction results for sample {i} to {save_path}")
                 
             evaluate_idx_data_loader_tqdm.set_description(f'{eval_stage} for the {batch_idx + 1}-th batch')

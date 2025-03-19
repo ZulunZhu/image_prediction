@@ -236,7 +236,18 @@ def stitchPatch(merged_dir, patch_file, patch_bbox, patch_length, merge_method='
     # Save the updated merged image and weight
     np.save(merged_img_file, merged_img)
     np.save(merged_wgt_file, merged_wgt)
-        
+    
+    # Save figure of the updated merged image 
+    fig, axs = plt.subplots(1, 3, figsize=(12, 4))
+    axs[0].imshow(merged_img, cmap='gray', vmin=0, vmax=1)
+    axs[0].set_title("Merged")
+    axs[0].axis('off')
+    plt.tight_layout()
+    save_path = merged_img_file[:-4] + ".png"
+    plt.savefig(save_path)
+    plt.close(fig)
+    print(f"Saved merged image to {save_path}")
+    
     # Optionally return the features and mapping information
     return merged_img, merged_wgt
 
