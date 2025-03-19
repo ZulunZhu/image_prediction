@@ -195,15 +195,15 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
                     np.save(os.path.join(result_folder, f"pred_{i:02d}.npy"), pred_norm)
 
                     # Step 4: Compute the difference image.
-                    diff_img = highlight_differences(pred_2d, gt_2d, threshold=0.2)
+                    diff_img = highlight_differences(pred_norm, gt_norm, threshold=0.2)
 
                     # Step 5: Create a figure with 1 row and 3 columns.
                     fig, axs = plt.subplots(1, 3, figsize=(12, 4))
-                    axs[0].imshow(gt_2d, cmap='gray', vmin=0, vmax=1)
+                    axs[0].imshow(gt_norm, cmap='gray', vmin=0, vmax=1)
                     axs[0].set_title("Ground Truth")
                     axs[0].axis('off')
 
-                    axs[1].imshow(pred_2d, cmap='gray', vmin=0, vmax=1)
+                    axs[1].imshow(pred_norm, cmap='gray', vmin=0, vmax=1)
                     axs[1].set_title("Predicted (Hist Matched)")
                     axs[1].axis('off')
 
