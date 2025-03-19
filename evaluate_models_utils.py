@@ -172,38 +172,38 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
                     gt_2d = reshape_to_2d(gt_embeddings[i], H, W)
                     pred_2d = reshape_to_2d(pred_embeddings[i], H, W)
 
-                    # Step 1: Convert both to float64 for histogram matching
-                    gt_2d_float = gt_2d.astype(np.float64)
-                    pred_2d_float = pred_2d.astype(np.float64) 
+                    # # Step 1: Convert both to float64 for histogram matching
+                    # gt_2d_float = gt_2d.astype(np.float64)
+                    # pred_2d_float = pred_2d.astype(np.float64) 
 
-                    # Step 2: Match the histogram of pred to gt to align brightness/contrast.
-                    # 'multichannel=False' because we are dealing with a single channel (grayscale).
-                    pred_matched = match_histograms(pred_2d_float, gt_2d_float)    
+                    # # Step 2: Match the histogram of pred to gt to align brightness/contrast.
+                    # # 'multichannel=False' because we are dealing with a single channel (grayscale).
+                    # pred_matched = match_histograms(pred_2d_float, gt_2d_float)    
 
-                    # Step 3: Normalize both images to [0, 255] for display.
-                    # We'll combine them to find a common min/max so they remain visually comparable.
-                    combined_min = min(gt_2d_float.min(), pred_matched.min())
-                    combined_max = max(gt_2d_float.max(), pred_matched.max())
-                    combined_range = combined_max - combined_min + 1e-8
+                    # # Step 3: Normalize both images to [0, 255] for display.
+                    # # We'll combine them to find a common min/max so they remain visually comparable.
+                    # combined_min = min(gt_2d_float.min(), pred_matched.min())
+                    # combined_max = max(gt_2d_float.max(), pred_matched.max())
+                    # combined_range = combined_max - combined_min + 1e-8
 
-                    gt_norm = ((gt_2d_float - combined_min) / combined_range * 255).astype(np.uint8)
-                    pred_norm = ((pred_matched - combined_min) / combined_range * 255).astype(np.uint8)
+                    # gt_norm = ((gt_2d_float - combined_min) / combined_range * 255).astype(np.uint8)
+                    # pred_norm = ((pred_matched - combined_min) / combined_range * 255).astype(np.uint8)
 
                     # Save the result
                     # CT: I think coherence values shouldn't be adjusted/normalized, they should be treated as it is because darker/lower or brighter/higher coherences have different meanings
-                    np.save(os.path.join(result_folder, f"gt_{i:02d}.npy"), gt_norm)   # Save ground truth for checking only, optionally disable 
-                    np.save(os.path.join(result_folder, f"pred_{i:02d}.npy"), pred_norm)
+                    np.save(os.path.join(result_folder, f"gt_{i:02d}.npy"), gt_2d)   # Save ground truth for checking only, optionally disable 
+                    np.save(os.path.join(result_folder, f"pred_{i:02d}.npy"), pred_2d)
 
                     # Step 4: Compute the difference image.
-                    diff_img = highlight_differences(pred_norm, gt_norm, threshold=0.2)
+                    diff_img = highlight_differences(pred_2d, gt_2d, threshold=0.2)
 
                     # Step 5: Create a figure with 1 row and 3 columns.
                     fig, axs = plt.subplots(1, 3, figsize=(12, 4))
-                    axs[0].imshow(gt_norm, cmap='gray', vmin=0, vmax=255)
+                    axs[0].imshow(gt_2d, cmap='gray', vmin=0, vmax=1)
                     axs[0].set_title("Ground Truth")
                     axs[0].axis('off')
 
-                    axs[1].imshow(pred_norm, cmap='gray', vmin=0, vmax=255)
+                    axs[1].imshow(pred_2d, cmap='gray', vmin=0, vmax=1)
                     axs[1].set_title("Predicted (Hist Matched)")
                     axs[1].axis('off')
 
