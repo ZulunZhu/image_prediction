@@ -219,7 +219,7 @@ def stitchPatch(merged_dir, patch_file, patch_bbox, patch_length, merge_method='
         # Update the weights over the region of the patch
         merged_wgt[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1] += 1
         # Add the patch to the original data and divide by the updated weights 
-        merged_img[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1] = (orig_img * orig_wgt + patch) / merged_wgt
+        merged_img[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1] = (orig_img * orig_wgt + patch) / merged_wgt[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1]
     elif merge_method == 'min' or merge_method == 'max':
         # Create a dummy merged image populated with the patch only
         patch_img = np.zeros((merged_x, merged_y), dtype=np.float64)
