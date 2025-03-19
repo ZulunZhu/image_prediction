@@ -53,8 +53,8 @@ def computePatches(image_x, image_y, patch_length, patch_overlap):
     step_x = patch_length - patch_overlap
     step_y = patch_length - patch_overlap
     # Define patches for normal area
-    for start_x in range(0, image_x - patch_length + 1, step_x):
-        for start_y in range(0, image_y - patch_length + 1, step_y):
+    for start_y in range(0, image_y - patch_length + 1, step_y):  # Iterate over y first
+        for start_x in range(0, image_x - patch_length + 1, step_x):  # Iterate over x inside y-loop
             patchList.append([start_x, start_x + patch_length - 1, start_y, start_y + patch_length - 1])
     # Handle the right edge (x-axis)
     if (image_x - patch_length) % step_x != 0:
@@ -67,8 +67,8 @@ def computePatches(image_x, image_y, patch_length, patch_overlap):
     # Handle the bottom-right corner
     if (image_x - patch_length) % step_x != 0 and (image_y - patch_length) % step_y != 0:
         patchList.append([image_x - patch_length, image_x - 1, image_y - patch_length, image_y - 1])
-    print("Total image x (width): ", image_x)
-    print("Total image y (length): ", image_y) 
+    print("Total image width (x-axis): ", image_x)
+    print("Total image height (y-axis): ", image_y) 
     print("Number of patches: ", len(patchList)) 
     print("Patch bbox: ", patchList)
     return patchList
@@ -253,13 +253,3 @@ def stitchPatch(merged_dir, patch_file, patch_bbox, patch_length, merge_method='
     
     # Optionally return the features and mapping information
     return merged_img, merged_wgt
-
-    # # Calculate overlapping region between patch and merged image 
-    # overlap_x_start = max(patch_bbox[0], 0)
-    # overlap_x_end = min(patch_bbox[1], merged_x-1)
-    # overlap_y_start = max(patch_bbox[2], 0)
-    # overlap_y_end = min(patch_bbox[3], merged_y-1)
-    # # Get region of the image that corresponds to where the patch will be placed
-    # overlap_merged = merged_img[overlap_x_start:overlap_x_end+1, overlap_y_start:overlap_y_end+1]
-    # overlap_patch = patch[overlap_x_start-patch_bbox[0] : overlap_x_end-patch_bbox[0]+1,
-    #                     overlap_y_start-patch_bbox[2] : overlap_y_end-patch_bbox[2]+1]
