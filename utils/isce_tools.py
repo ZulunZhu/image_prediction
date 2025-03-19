@@ -177,7 +177,7 @@ def prepareData(data_in_dir, data_out_dir, bbox, base_filename='b01_16r4alks'):
 def stitchPatch(merged_dir, patch_file, patch_bbox, patch_length, merge_method='mean'):
     
     # Patch file to stitch to the merged file
-    patch = np.load(patch_file)   
+    patch = np.load(os.path.join("image_result",patch_file))   
 
     # Merged file and initialise for first patch if it doesn't exist
     merged_img_file = os.path.join(merged_dir, patch_file.replace("pred_", "pred_merged_img_"))
