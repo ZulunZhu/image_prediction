@@ -183,8 +183,8 @@ def stitchPatch(merged_dir, patch_file, patch_bbox, patch_length, merge_method='
     merged_img_file = os.path.join(merged_dir, patch_file.replace("pred_", "pred_merged_img_"))
     merged_wgt_file = os.path.join(merged_dir, patch_file.replace("pred_", "pred_merged_wgt_"))
     if not os.path.exists(merged_img_file):
-        merged_img = np.zeros((patch_length,patch_length), dtype=np.float32)
-        merged_wgt = np.zeros((patch_length,patch_length), dtype=np.float32)
+        merged_img = np.zeros((patch_length,patch_length), dtype=np.float64)
+        merged_wgt = np.zeros((patch_length,patch_length), dtype=np.float64)
         np.save(merged_img_file, merged_img)
         np.save(merged_wgt_file, merged_wgt)
     else:
@@ -200,8 +200,8 @@ def stitchPatch(merged_dir, patch_file, patch_bbox, patch_length, merge_method='
         new_y = max(merged_y, patch_bbox[3]+1)
         
         # Create a bigger merged image with the new sizes
-        new_img = np.zeros((new_x, new_y), dtype=np.float32)
-        new_wgt = np.zeros((new_x, new_y), dtype=np.float32)
+        new_img = np.zeros((new_x, new_y), dtype=np.float64)
+        new_wgt = np.zeros((new_x, new_y), dtype=np.float64)
         
         # Copy existing information into the updated merged image
         new_img[:merged_x, :merged_y] = merged_img
@@ -219,7 +219,7 @@ def stitchPatch(merged_dir, patch_file, patch_bbox, patch_length, merge_method='
         merged_img /= merged_wgt
     elif merge_method == 'min' or merge_method == 'max':
         # Create a dummy merged image populated with the patch only
-        patch_img = np.zeros((merged_x, merged_y), dtype=np.float32)
+        patch_img = np.zeros((merged_x, merged_y), dtype=np.float64)
         patch_img[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1] = patch
         # Find non-overlapping region between patch and merged image (mask=1 if weight is still 0, mask=0 if weight is > 0)
         mask = (merged_wgt == 0)

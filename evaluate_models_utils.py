@@ -199,11 +199,11 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
 
                     # Step 5: Create a figure with 1 row and 3 columns.
                     fig, axs = plt.subplots(1, 3, figsize=(12, 4))
-                    axs[0].imshow(gt_norm, cmap='gray', vmin=0, vmax=1)
+                    axs[0].imshow(gt_norm, cmap='gray', vmin=0, vmax=255)
                     axs[0].set_title("Ground Truth")
                     axs[0].axis('off')
 
-                    axs[1].imshow(pred_norm, cmap='gray', vmin=0, vmax=1)
+                    axs[1].imshow(pred_norm, cmap='gray', vmin=0, vmax=255)
                     axs[1].set_title("Predicted (Hist Matched)")
                     axs[1].axis('off')
 
