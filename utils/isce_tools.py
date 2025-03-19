@@ -243,7 +243,7 @@ def stitchPatch(merged_dir, patch_file, patch_bbox, patch_length, merge_method='
     
     # Save figure of the updated merged image 
     fig, axs = plt.subplots(1, 3, figsize=(12, 4))
-    axs[0].imshow(merged_img, cmap='gray', vmin=0, vmax=1)
+    axs[0].imshow(merged_img, cmap='gray', vmin=0, vmax=255)
     axs[0].set_title("Merged")
     axs[0].axis('off')
     plt.tight_layout()
