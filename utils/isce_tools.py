@@ -213,10 +213,13 @@ def stitchPatch(merged_dir, patch_file, patch_bbox, patch_length, merge_method='
     # Stitch patch to the merged image using either mean, min, or max method
     # TO-DO: median requires storing values of individual patches and can't be implemented sequentially 
     if merge_method == 'mean':
-        # Add patch to the merged image, track the weight, and apply weighted mean 
-        merged_img[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1] += patch
+        # Original data and weights over the region of the patch
+        orig_img = merged_img[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1]
+        orig_wgt = merged_wgt[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1]
+        # Update the weights over the region of the patch
         merged_wgt[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1] += 1
-        merged_img /= merged_wgt
+        # Add the patch to the original data and divide by the updated weights 
+        merged_img[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1] = (orig_img * orig_wgt + patch) / merged_wgt
     elif merge_method == 'min' or merge_method == 'max':
         # Create a dummy merged image populated with the patch only
         patch_img = np.zeros((merged_x, merged_y), dtype=np.float64)
