@@ -439,7 +439,7 @@ if __name__ == "__main__":
         
         # stitch new patch to the merged image for each edge predicted 
         pred_dir = os.path.join(patch_dir, 'image_result')
-        for pred_file in [f for f in os.listdir(pred_dir) if f.startswith("pred_") and f.endswith(".npy")]:
+        for pred_file in sorted([f for f in os.listdir(pred_dir) if f.startswith("pred_") and f.endswith(".npy")]):
             stitchPatch(merged_dir, pred_file, patch_bbox, args.patch_length, merge_method='mean')
 
         os.chdir(work_dir)
