@@ -46,7 +46,7 @@ def sizeFromXml(file):
     return width, length   
 
 
-def computePatches(image_x, image_y, patch_length, patch_overlap):
+def computePatches(image_y, image_x, patch_length, patch_overlap):
     # Initialize the output patchList which will contain a list of patch bounding boxes in the form of [start_x, end_x, start_y, end_y]
     patchList = []
     # Compute step sizes
