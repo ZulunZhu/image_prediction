@@ -19,7 +19,7 @@ from models.TCL import TCL
 from models.GraphMixer import GraphMixer
 from models.DyGFormer import DyGFormer
 from models.modules import MergeLayer
-from utils.isce_tools import sizeFromXml, computePatches, prepareData, stitchPatch
+from utils.isce_tools import sizeFromXml, computePatches, prepareData, stitchPatchMean, stitchPatchMedian
 from utils.utils import set_random_seed, convert_to_gpu, get_parameter_sizes, create_optimizer
 from utils.utils import get_neighbor_sampler, NegativeEdgeSampler
 from evaluate_models_utils import evaluate_model_link_prediction,evaluate_image_link_prediction
@@ -33,7 +33,7 @@ if __name__ == "__main__":
     warnings.filterwarnings('ignore')
 
     # inputs
-    data_dir = "/aria/zulun_sharing/TGNN_sharing_20250214/merged/cors" # directory containing original image data
+    data_dir = "/aria/zulun_sharing/TEST_KZ_TGNN_sharing_20250214/merged/cors" # directory containing original image data
 
     # get arguments
     args = get_link_prediction_args(is_evaluation=False)
@@ -54,7 +54,7 @@ if __name__ == "__main__":
     for patch_id, patch_bbox in enumerate(patchList):
 
         # create sub-directory for the patch
-        patch_dir = os.path.join(work_dir,'patch_' + f"{patch_id+1:03d}")
+        patch_dir = os.path.join(work_dir,'patch_' + f"{patch_id+1:04d}")
         if not os.path.exists(patch_dir):
             os.makedirs(patch_dir)
 
@@ -437,12 +437,19 @@ if __name__ == "__main__":
             logger.info(f'average test {metric_name}, {np.mean([test_metric_single_run[metric_name] for test_metric_single_run in test_metric_all_runs]):.4f} '
                         f'± {np.std([test_metric_single_run[metric_name] for test_metric_single_run in test_metric_all_runs], ddof=1):.4f}')
         
-        # stitch new patch to the merged image for each edge predicted 
-        pred_dir = os.path.join(patch_dir, 'image_result')
-        for pred_file in sorted([f for f in os.listdir(pred_dir) if f.startswith("pred_") and f.endswith(".npy")]):
-            stitchPatch(merged_dir, pred_file, patch_bbox, args.patch_length, merge_method='mean')
-        logger.info(f'Stitched patch {patch_id} to merged image in {merged_dir}')
+        # stitch new patch to the merged image for each edge predicted using mean/min/max
+        if args.stitch_method == 'mean':
+            pred_dir = os.path.join(patch_dir, 'image_result')
+            for pred_file in sorted([f for f in os.listdir(pred_dir) if f.startswith("pred_") and f.endswith(".npy")]):
+                stitchPatchMean(merged_dir, pred_file, patch_bbox, args.patch_length)
+            logger.info(f'Stitched patch {patch_id} to merged image in {merged_dir}')
 
         os.chdir(work_dir)
 
+    # stitch all patches to create merged image for each edge predicted using median 
+    if args.stitch_method == 'median':
+        for pred_file in sorted([f for f in os.listdir('patch_001/image_result') if f.startswith("pred_") and f.endswith(".npy")]):
+            stitchPatchMedian(merged_dir, patchList, pred_file, width, length, args.stitch_chunk_size)   
+        logger.info(f'Stitched all patches to create merged image in {merged_dir}')
+    
     sys.exit()

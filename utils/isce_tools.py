@@ -175,7 +175,7 @@ def prepareData(data_in_dir, data_out_dir, bbox, base_filename='b01_16r4alks'):
     return node_features, edge_features, date_to_id, edge_node_pairs
 
 
-def stitchPatch(merged_dir, patch_file, patch_bbox, patch_length, merge_method='mean'):
+def stitchPatchMean(merged_dir, patch_file, patch_bbox, patch_length):
     
     # Patch file to stitch to the merged file
     patch = np.load(os.path.join("image_result",patch_file))   
@@ -184,7 +184,7 @@ def stitchPatch(merged_dir, patch_file, patch_bbox, patch_length, merge_method='
     merged_img_file = os.path.join(merged_dir, patch_file.replace("pred_", "pred_merged_img_"))
     merged_wgt_file = os.path.join(merged_dir, patch_file.replace("pred_", "pred_merged_wgt_"))
     if not os.path.exists(merged_img_file):
-        merged_img = np.zeros((patch_length,patch_length), dtype=np.float64)
+        merged_img = np.full((patch_length,patch_length), np.nan, dtype=np.float64)
         merged_wgt = np.zeros((patch_length,patch_length), dtype=np.float64)
         np.save(merged_img_file, merged_img)
         np.save(merged_wgt_file, merged_wgt)
@@ -201,7 +201,7 @@ def stitchPatch(merged_dir, patch_file, patch_bbox, patch_length, merge_method='
         new_y = max(merged_y, patch_bbox[3]+1)
         
         # Create a bigger merged image with the new sizes
-        new_img = np.zeros((new_x, new_y), dtype=np.float64)
+        new_img = np.full((new_x, new_y), np.nan, dtype=np.float64)
         new_wgt = np.zeros((new_x, new_y), dtype=np.float64)
         
         # Copy existing information into the updated merged image
@@ -211,46 +211,116 @@ def stitchPatch(merged_dir, patch_file, patch_bbox, patch_length, merge_method='
         merged_wgt = new_wgt
         merged_x, merged_y = np.shape(merged_img)
 
-    # Stitch patch to the merged image using either mean, min, or max method
-    # TO-DO: median requires storing values of individual patches and can't be implemented sequentially 
-    if merge_method == 'mean':
-        # Original data and weights over the region of the patch
-        orig_img = merged_img[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1]
-        orig_wgt = merged_wgt[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1]
-        # Update the weights over the region of the patch
-        merged_wgt[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1] += 1
-        # Add the patch to the original data and divide by the updated weights 
-        merged_img[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1] = (orig_img * orig_wgt + patch) / merged_wgt[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1]
-    elif merge_method == 'min' or merge_method == 'max':
-        # Create a dummy merged image populated with the patch only
-        patch_img = np.zeros((merged_x, merged_y), dtype=np.float64)
-        patch_img[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1] = patch
-        # Find non-overlapping region between patch and merged image (mask=1 if weight is still 0, mask=0 if weight is > 0)
-        mask = (merged_wgt == 0)
-        # For non-overlapping region, copy the patch values to the merged image
-        merged_img[mask] = patch_img[mask]
-        # For overlapping region, apply min or max method
-        if merge_method == 'min':
-            merged_img[~mask] = np.minimum(merged_img[~mask], patch_img[~mask])
-        elif merge_method == 'max':
-            merged_img[~mask] = np.maximum(merged_img[~mask], patch_img[~mask])
-    else:
-        raise ValueError("Invalid merge_method. Choose from 'mean', 'min', or 'max'.")
+    # Begin stitching
+    # Original data and weights over the region of the patch
+    orig_img = merged_img[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1]
+    orig_wgt = merged_wgt[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1]
+    # Update the weights over the region of the patch
+    merged_wgt[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1] += 1
+    # Add the patch to the original data and divide by the updated weights 
+    # If the original data is NaN, replace with 0 so that it does not affect the summing operation
+    merged_img[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1] = (np.nan_to_num(orig_img, nan=0.0) * orig_wgt + patch) / merged_wgt[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1]
     
     # Save the updated merged image and weight
     np.save(merged_img_file, merged_img)
     np.save(merged_wgt_file, merged_wgt)
     
     # Save figure of the updated merged image 
-    fig, axs = plt.subplots(1, 3, figsize=(12, 4))
-    axs[0].imshow(merged_img, cmap='gray', vmin=0, vmax=255)
-    axs[0].set_title("Merged")
-    axs[0].axis('off')
-    plt.tight_layout()
+    plt.imshow(merged_img, cmap='gray', vmin=0, vmax=255)
+    plt.colorbar()
     save_path = merged_img_file[:-4] + ".png"
     plt.savefig(save_path)
-    plt.close(fig)
+    plt.close()
     print(f"Saved merged image to {save_path}")
     
     # Optionally return the features and mapping information
     return merged_img, merged_wgt
+
+
+def stitchPatchMedian(merged_dir, patch_list, pred_file, x, y, chunk_size):
+
+    # Initialise merged image if it doesn't exist
+    print(f"Starting merging (median) for {pred_file}...")
+    merged_img_file = os.path.join(merged_dir, pred_file.replace("pred_", "pred_merged_img_"))
+    if not os.path.exists(merged_img_file):
+        merged_img = np.full((x,y), np.nan, dtype=np.float64)
+        np.save(merged_img_file, merged_img)
+    else:
+        merged_img = np.load(merged_img_file)
+
+    # Get list of bounding boxes for each chunk (splitting whole image into chunks to reduce memory usage)
+    chunk_list = []
+    for i in range(0, y, chunk_size):  
+        for j in range(0, x, chunk_size): 
+            chunk_list.append((j, min(j+chunk_size,x)-1, i, min(i+chunk_size,y)-1))
+    print("Total image width (x-axis): ", x)
+    print("Total image height (y-axis): ", y) 
+    print("Number of chunks: ", len(chunk_list)) 
+    print("Chunk bbox: ", chunk_list)
+
+    # Find all the patches which have overlap with a chunk for each chunk
+    patch_to_chunks_id = [[] for _ in range(len(chunk_list))]
+    patch_to_chunks_bbox = [[] for _ in range(len(chunk_list))]
+    for patch_id, patch in enumerate(patch_list):
+        px1, px2, py1, py2 = patch
+        for chunk_id, chunk_bbox in enumerate(chunk_list):
+            cx1, cx2, cy1, cy2 = chunk_bbox
+            if not (px2 < cx1 or px1 > cx2 or py2 < cy1 or py1 > cy2):
+                # Overlap condition: 
+                # check if the right edge of the patch is to the left of the left edge of the chunk,
+                # check if the left edge of the patch is to the right of the right edge of the chunk,
+                # check if the top edge of the patch is to the bottom of the bottom edge of the chunk,
+                # check if the bottom edge of the patch is to the top of the top edge of the chunk,
+                # if any of these conditions are false, then there is an overlap
+                patch_to_chunks_id[chunk_id].append(patch_id+1) 
+                patch_to_chunks_bbox[chunk_id].append(patch) 
+    
+    # Loop through each chunk 
+    for chunk_id, chunk_bbox in enumerate(chunk_list):
+        print(f"Chunk {chunk_id+1} with bbox {chunk_bbox} overlaps with the following {len(patch_to_chunks_id[chunk_id])} patch folders:")
+        print(patch_to_chunks_id[chunk_id])
+        cx1, cx2, cy1, cy2 = chunk_bbox
+
+        # Initialise empty 3D chunk array
+        chunk_stack = np.full((cx2-cx1+1, cy2-cy1+1, len(patch_to_chunks_id[chunk_id])), np.nan, dtype=np.float64)
+
+        # Loop through each patch that overlaps with the chunk
+        for idx, patch_id in enumerate(patch_to_chunks_id[chunk_id]):
+            patch_file = os.path.join("patch_"+f"{patch_id:03d}", "image_result", pred_file)
+            if os.path.exists(patch_file):
+                patch_img = np.load(patch_file)
+            else:
+                print(f"Patch file {patch_file} not found.")
+
+            # Get the bounding box of the patch
+            px1, px2, py1, py2 = patch_to_chunks_bbox[chunk_id][idx]
+
+            # Get indices of the chunk for which the patch fits within the chunk
+            ccx1 = max(px1, cx1) - cx1
+            ccx2 = min(px2, cx2) - cx1
+            ccy1 = max(py1, cy1) - cy1
+            ccy2 = min(py2, cy2) - cy1
+
+            # Get indices of the patch for which the patch fits within the chunk
+            ppx1 = max(px1, cx1) - px1
+            ppx2 = min(px2, cx2) - px1
+            ppy1 = max(py1, cy1) - py1
+            ppy2 = min(py2, cy2) - py1
+
+            # Stack the patch into the 3D chunk array
+            chunk_stack[ccx1:ccx2+1, ccy1:ccy2+1, idx] = patch_img[ppx1:ppx2+1, ppy1:ppy2+1]
+
+        # Compute median of the 3D chunk array and output to the larger merged image
+        merged_img[cx1:cx2+1, cy1:cy2+1] = np.nanmedian(chunk_stack, axis=2)
+
+        # Save the updated merged image at the end of each chunk
+        np.save(merged_img_file, merged_img)
+        print(f"Updated merged image with chunk {chunk_id+1} in {merged_img_file}")
+
+     # Plot and save merged image once all chunks are processed
+    plt.imshow(merged_img, cmap='gray', vmin=0, vmax=255)
+    plt.colorbar()
+    save_path = os.path.join(merged_dir, pred_file[:-3].replace("pred_", "pred_merged_img_")+'png')
+    plt.savefig(save_path)
+    plt.close()
+    print(f"Saved merged image for {pred_file} to {save_path}")
