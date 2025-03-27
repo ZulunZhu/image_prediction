@@ -41,8 +41,8 @@ if __name__ == "__main__":
     # get list bounding boxes for each patch
     sys.setrecursionlimit(100000)  # Increase recursion limit to avoid crashes
     sub_dir = [d for d in os.listdir(data_dir) if d.startswith("cor_") and os.path.isdir(os.path.join(data_dir, d))]
-    width, length = sizeFromXml(os.path.join(data_dir, sub_dir[0], "b01_16r4alks.cor"))   # Get size of full image
-    patchList = computePatches(width, length, args.patch_length, args.patch_overlap)   # Get list of bounding boxes for each patch
+    y, x = sizeFromXml(os.path.join(data_dir, sub_dir[0], "b01_16r4alks.cor"))   # Get size of full image
+    patchList = computePatches(x, y, args.patch_length, args.patch_overlap)   # Get list of bounding boxes for each patch
 
     # initialize merged image
     work_dir = os.getcwd()
@@ -448,8 +448,8 @@ if __name__ == "__main__":
 
     # stitch all patches to create merged image for each edge predicted using median 
     if args.stitch_method == 'median':
-        for pred_file in sorted([f for f in os.listdir('patch_001/image_result') if f.startswith("pred_") and f.endswith(".npy")]):
-            stitchPatchMedian(merged_dir, patchList, pred_file, width, length, args.stitch_chunk_size)   
+        for pred_file in sorted([f for f in os.listdir('patch_0001/image_result') if f.startswith("pred_") and f.endswith(".npy")]):
+            stitchPatchMedian(merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)   
         logger.info(f'Stitched all patches to create merged image in {merged_dir}')
     
     sys.exit()

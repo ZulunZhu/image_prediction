@@ -48,7 +48,7 @@ def get_link_prediction_args(is_evaluation: bool = False):
     parser.add_argument('--num_runs', type=int, default=5, help='number of runs')
     parser.add_argument('--test_interval_epochs', type=int, default=10, help='how many epochs to perform testing once')
     parser.add_argument('--load_best_configs', action='store_true', default=False, help='whether to load the best configurations')
-    parser.add_argument('--stitch_method', type=str, default='median', choices=['mean', 'median'], help='method to stitch patches')
+    parser.add_argument('--stitch_method', type=str, default='median', choices=['mean', 'median'], help='method to handle overlap areas when stitching patches')
     parser.add_argument('--stitch_chunk_size', type=int, default=500, help='chunk size used for median stitching')
 
     try:

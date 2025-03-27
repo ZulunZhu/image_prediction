@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 
 def readAmp(file,bbox):
     # TO-DO for CT: optimise reading binary file using bytes to avoid reading whole image into memory
+    # bbox is in the form of [start_x, end_x, start_y, end_y]
+    # x = length, y = width
     width, length = sizeFromXml(file)
     with open(file, 'rb') as f:
         data = np.fromfile(f, dtype='<f4')
@@ -24,6 +26,8 @@ def readAmp(file,bbox):
 
 def readCor(file,bbox):
     # TO-DO for CT: optimise reading binary file using bytes to avoid reading whole image into memory
+    # bbox is in the form of [start_x, end_x, start_y, end_y]
+    # x = length, y = width
     width, length = sizeFromXml(file)
     with open(file, 'rb') as f:
         data = np.fromfile(f, dtype=np.float32)
@@ -46,7 +50,7 @@ def sizeFromXml(file):
     return width, length   
 
 
-def computePatches(image_y, image_x, patch_length, patch_overlap):
+def computePatches(image_x, image_y, patch_length, patch_overlap):
     # Initialize the output patchList which will contain a list of patch bounding boxes in the form of [start_x, end_x, start_y, end_y]
     patchList = []
     # Compute step sizes
@@ -69,7 +73,7 @@ def computePatches(image_y, image_x, patch_length, patch_overlap):
         patchList.append([image_x - patch_length, image_x - 1, image_y - patch_length, image_y - 1])
     
     print("Total image width (x-axis): ", image_x)
-    print("Total image height (y-axis): ", image_y) 
+    print("Total image length (y-axis): ", image_y) 
     print("Number of patches: ", len(patchList)) 
     print("Patch bbox: ", patchList)
     return patchList
@@ -197,8 +201,8 @@ def stitchPatchMean(merged_dir, patch_file, patch_bbox, patch_length):
 
     # If existing merged image is too small, compute the new required size
     if patch_bbox[1]+1 > merged_x or patch_bbox[3]+1 > merged_y:
-        new_x = max(merged_x, patch_bbox[1]+1)
-        new_y = max(merged_y, patch_bbox[3]+1)
+        new_x = max(patch_bbox[1]+1, merged_x)
+        new_y = max(patch_bbox[3]+1, merged_y)
         
         # Create a bigger merged image with the new sizes
         new_img = np.full((new_x, new_y), np.nan, dtype=np.float64)
@@ -215,8 +219,10 @@ def stitchPatchMean(merged_dir, patch_file, patch_bbox, patch_length):
     # Original data and weights over the region of the patch
     orig_img = merged_img[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1]
     orig_wgt = merged_wgt[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1]
+
     # Update the weights over the region of the patch
     merged_wgt[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1] += 1
+
     # Add the patch to the original data and divide by the updated weights 
     # If the original data is NaN, replace with 0 so that it does not affect the summing operation
     merged_img[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1] = (np.nan_to_num(orig_img, nan=0.0) * orig_wgt + patch) / merged_wgt[patch_bbox[0]:patch_bbox[1]+1, patch_bbox[2]:patch_bbox[3]+1]
@@ -253,8 +259,8 @@ def stitchPatchMedian(merged_dir, patch_list, pred_file, x, y, chunk_size):
     for i in range(0, y, chunk_size):  
         for j in range(0, x, chunk_size): 
             chunk_list.append((j, min(j+chunk_size,x)-1, i, min(i+chunk_size,y)-1))
-    print("Total image width (x-axis): ", x)
-    print("Total image height (y-axis): ", y) 
+    print("Total image length (x-axis): ", x)
+    print("Total image width (y-axis): ", y) 
     print("Number of chunks: ", len(chunk_list)) 
     print("Chunk bbox: ", chunk_list)
 
@@ -286,29 +292,32 @@ def stitchPatchMedian(merged_dir, patch_list, pred_file, x, y, chunk_size):
 
         # Loop through each patch that overlaps with the chunk
         for idx, patch_id in enumerate(patch_to_chunks_id[chunk_id]):
-            patch_file = os.path.join("patch_"+f"{patch_id:03d}", "image_result", pred_file)
+            patch_file = os.path.join("patch_"+f"{patch_id:04d}", "image_result", pred_file)
+
             if os.path.exists(patch_file):
+                # Load data from patch file
                 patch_img = np.load(patch_file)
+
+                # Get the bounding box of the patch
+                px1, px2, py1, py2 = patch_to_chunks_bbox[chunk_id][idx]
+
+                # Get indices of the chunk for which the patch fits within the chunk
+                ccx1 = max(px1, cx1) - cx1
+                ccx2 = min(px2, cx2) - cx1
+                ccy1 = max(py1, cy1) - cy1
+                ccy2 = min(py2, cy2) - cy1
+
+                # Get indices of the patch for which the patch fits within the chunk
+                ppx1 = max(px1, cx1) - px1
+                ppx2 = min(px2, cx2) - px1
+                ppy1 = max(py1, cy1) - py1
+                ppy2 = min(py2, cy2) - py1
+
+                # Stack the patch into the 3D chunk array
+                chunk_stack[ccx1:ccx2+1, ccy1:ccy2+1, idx] = patch_img[ppx1:ppx2+1, ppy1:ppy2+1]
+            
             else:
                 print(f"Patch file {patch_file} not found.")
-
-            # Get the bounding box of the patch
-            px1, px2, py1, py2 = patch_to_chunks_bbox[chunk_id][idx]
-
-            # Get indices of the chunk for which the patch fits within the chunk
-            ccx1 = max(px1, cx1) - cx1
-            ccx2 = min(px2, cx2) - cx1
-            ccy1 = max(py1, cy1) - cy1
-            ccy2 = min(py2, cy2) - cy1
-
-            # Get indices of the patch for which the patch fits within the chunk
-            ppx1 = max(px1, cx1) - px1
-            ppx2 = min(px2, cx2) - px1
-            ppy1 = max(py1, cy1) - py1
-            ppy2 = min(py2, cy2) - py1
-
-            # Stack the patch into the 3D chunk array
-            chunk_stack[ccx1:ccx2+1, ccy1:ccy2+1, idx] = patch_img[ppx1:ppx2+1, ppy1:ppy2+1]
 
         # Compute median of the 3D chunk array and output to the larger merged image
         merged_img[cx1:cx2+1, cy1:cy2+1] = np.nanmedian(chunk_stack, axis=2)
