@@ -13,6 +13,8 @@ def get_link_prediction_args(is_evaluation: bool = False):
     parser = argparse.ArgumentParser('Interface for the link prediction task')
     parser.add_argument('--dataset_name', type=str, help='dataset to be used', default='tgbl-wiki',
                         choices=["tgbl-wiki", "tgbl-review", "tgbl-coin", "tgbl-comment", "tgbl-flight"])
+    parser.add_argument('--patch_length', type=int, default=224, help='patch length')
+    parser.add_argument('--patch_overlap', type=int, default=204, help='patch overlap')
     parser.add_argument('--batch_size', type=int, default=20, help='batch size')
     parser.add_argument('--model_name', type=str, default='DyGFormer', help='name of the model, note that EdgeBank is only applicable for evaluation',
                         choices=['JODIE', 'DyRep', 'TGAT', 'TGN', 'CAWN', 'EdgeBank', 'TCL', 'GraphMixer', 'DyGFormer'])
@@ -34,7 +36,7 @@ def get_link_prediction_args(is_evaluation: bool = False):
                         choices=['unlimited_memory', 'time_window_memory', 'repeat_threshold_memory'])
     parser.add_argument('--time_window_mode', type=str, default='fixed_proportion', help='how to select the time window size for time window memory',
                         choices=['fixed_proportion', 'repeat_interval'])
-    parser.add_argument('--patch_size', type=int, default=1, help='patch size')
+    parser.add_argument('--patch_size', type=int, default=1, help='patch size for DyGFormer')
     parser.add_argument('--channel_embedding_dim', type=int, default=50, help='dimension of each channel embedding')
     parser.add_argument('--max_input_sequence_length', type=int, default=32, help='maximal length of the input sequence of each node')
     parser.add_argument('--learning_rate', type=float, default=0.0001, help='learning rate')
@@ -42,10 +44,12 @@ def get_link_prediction_args(is_evaluation: bool = False):
     parser.add_argument('--num_epochs', type=int, default=100, help='number of epochs')
     parser.add_argument('--optimizer', type=str, default='Adam', choices=['SGD', 'Adam', 'RMSprop'], help='name of optimizer')
     parser.add_argument('--weight_decay', type=float, default=0.0, help='weight decay')
-    parser.add_argument('--patience', type=int, default=20, help='patience for early stopping')
+    parser.add_argument('--patience', type=int, default=20, help='patience for early stopping in terms of no. of epochs')
     parser.add_argument('--num_runs', type=int, default=5, help='number of runs')
     parser.add_argument('--test_interval_epochs', type=int, default=10, help='how many epochs to perform testing once')
     parser.add_argument('--load_best_configs', action='store_true', default=False, help='whether to load the best configurations')
+    parser.add_argument('--stitch_method', type=str, default='median', choices=['mean', 'median'], help='method to handle overlap areas when stitching patches')
+    parser.add_argument('--stitch_chunk_size', type=int, default=500, help='chunk size used for median stitching')
 
     try:
         args = parser.parse_args()

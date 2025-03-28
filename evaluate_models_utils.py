@@ -110,7 +110,7 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
             # get negative probabilities, Tensor, shape (batch_size * num_negative_samples_per_node, )
             # print("positive_probabilities", positive_probabilities.shape)
             # print("edge_raw_features[evaluate_data_indices]", edge_raw_features[evaluate_data_indices].shape)
-           # Assuming positive_probabilities is already a NumPy array
+            # Assuming positive_probabilities is already a NumPy array
             loss = np.mean(np.abs(positive_probabilities - edge_raw_features[evaluate_data_indices]))
 
 
@@ -166,7 +166,7 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
                     mask = diff > threshold
                     rgb[mask] = np.array([255, 0, 0], dtype=np.uint8)
                     return rgb
-
+                
                 for i in range(n):
                     # Reshape ground truth and prediction into 2D.
                     gt_2d = reshape_to_2d(gt_embeddings[i], H, W)
@@ -174,11 +174,11 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
 
                     # Step 1: Convert both to float64 for histogram matching
                     gt_2d_float = gt_2d.astype(np.float64)
-                    pred_2d_float = pred_2d.astype(np.float64)
+                    pred_2d_float = pred_2d.astype(np.float64) 
 
                     # Step 2: Match the histogram of pred to gt to align brightness/contrast.
                     # 'multichannel=False' because we are dealing with a single channel (grayscale).
-                    pred_matched = match_histograms(pred_2d_float, gt_2d_float)
+                    pred_matched = match_histograms(pred_2d_float, gt_2d_float)    
 
                     # Step 3: Normalize both images to [0, 255] for display.
                     # We'll combine them to find a common min/max so they remain visually comparable.
@@ -189,16 +189,21 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
                     gt_norm = ((gt_2d_float - combined_min) / combined_range * 255).astype(np.uint8)
                     pred_norm = ((pred_matched - combined_min) / combined_range * 255).astype(np.uint8)
 
+                    # Save the result
+                    # CT: I think coherence values shouldn't be adjusted/normalized, they should be treated as it is because darker/lower or brighter/higher coherences have different meanings
+                    np.save(os.path.join(result_folder, f"gt_{i:02d}.npy"), gt_norm)   # Save ground truth for checking only, optionally disable 
+                    np.save(os.path.join(result_folder, f"pred_{i:02d}.npy"), pred_norm)
+
                     # Step 4: Compute the difference image.
-                    diff_img = highlight_differences(pred_norm, gt_norm, threshold=50)
+                    diff_img = highlight_differences(pred_norm, gt_norm, threshold=0.2)
 
                     # Step 5: Create a figure with 1 row and 3 columns.
                     fig, axs = plt.subplots(1, 3, figsize=(12, 4))
-                    axs[0].imshow(gt_norm, cmap='gray')
+                    axs[0].imshow(gt_norm, cmap='gray', vmin=0, vmax=255)
                     axs[0].set_title("Ground Truth")
                     axs[0].axis('off')
 
-                    axs[1].imshow(pred_norm, cmap='gray')
+                    axs[1].imshow(pred_norm, cmap='gray', vmin=0, vmax=255)
                     axs[1].set_title("Predicted (Hist Matched)")
                     axs[1].axis('off')
 
@@ -209,10 +214,10 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
                     plt.tight_layout()
 
                     # Save the figure
-                    save_path = os.path.join(result_folder, f"comparison_{i}.png")
+                    save_path = os.path.join(result_folder, f"comparison_{i:02d}.png")
                     plt.savefig(save_path)
                     plt.close(fig)
-                    print(f"Saved comparison figure for sample {i} to {save_path}")
+                    print(f"Saved prediction results for sample {i} to {save_path}")
                 
             evaluate_idx_data_loader_tqdm.set_description(f'{eval_stage} for the {batch_idx + 1}-th batch')
 
