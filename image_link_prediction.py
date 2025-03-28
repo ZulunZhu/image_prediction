@@ -23,7 +23,7 @@ from utils.isce_tools import sizeFromXml, computePatches, prepareData, stitchPat
 from utils.utils import set_random_seed, convert_to_gpu, get_parameter_sizes, create_optimizer
 from utils.utils import get_neighbor_sampler, NegativeEdgeSampler
 from evaluate_models_utils import evaluate_model_link_prediction,evaluate_image_link_prediction
-from utils.DataLoader import get_idx_data_loader, get_link_prediction_tgb_data, get_link_prediction_image_data
+from utils.DataLoader import get_idx_data_loader, get_link_prediction_tgb_data, get_link_prediction_image_data, get_link_prediction_image_data_split_by_nodes
 from utils.EarlyStopping import EarlyStopping
 from utils.load_configs import get_link_prediction_args
 
@@ -33,14 +33,14 @@ if __name__ == "__main__":
     warnings.filterwarnings('ignore')
 
     # inputs
-    data_dir = "/aria/zulun_sharing/TEST_KZ_TGNN_sharing_20250214/merged/cors" # directory containing original image data
+    data_dir = "/aria/zulun_sharing/TEST_KZ_TGNN_sharing_20250214/merged/cors_ALL" # directory containing original image data
 
     # get arguments
     args = get_link_prediction_args(is_evaluation=False)
     
     # get list bounding boxes for each patch
     sys.setrecursionlimit(100000)  # Increase recursion limit to avoid crashes
-    sub_dir = [d for d in os.listdir(data_dir) if d.startswith("cor_") and os.path.isdir(os.path.join(data_dir, d))]
+    sub_dir = [d for d in os.listdir(data_dir) if d.startswith("cor_") and os.path.isdir(os.path.join(data_dir, d))]  # For getting image dimensions
     y, x = sizeFromXml(os.path.join(data_dir, sub_dir[0], "b01_16r4alks.cor"))   # Get size of full image
     patchList = computePatches(x, y, args.patch_length, args.patch_overlap)   # Get list of bounding boxes for each patch
 
@@ -66,7 +66,10 @@ if __name__ == "__main__":
 
         # get data for training, validation and testing
         node_raw_features, edge_raw_features, full_data, train_data, val_data, test_data, eval_neg_edge_sampler, eval_metric_name = \
-            get_link_prediction_image_data(dataset_name=args.dataset_name)
+            get_link_prediction_image_data_split_by_nodes(dataset_name=args.dataset_name)
+
+        print("Dimension of node_raw_features:", node_raw_features.shape)
+        print("Dimension of edge_raw_features:", edge_raw_features.shape)
 
         # initialize training neighbor sampler to retrieve temporal graph
         train_neighbor_sampler = get_neighbor_sampler(data=train_data, sample_neighbor_strategy=args.sample_neighbor_strategy,
@@ -78,9 +81,14 @@ if __name__ == "__main__":
 
         # initialize train negative sampler
         # train_neg_edge_sampler = NegativeEdgeSampler(src_node_ids=train_data.src_node_ids, dst_node_ids=train_data.dst_node_ids)
-        print("test_data.src_node_ids", test_data.src_node_ids)
-        print("test_data.dst_node_ids", test_data.dst_node_ids)
+        print(f"train_data.src_node_ids ({len(train_data.src_node_ids)} edges):\n", train_data.src_node_ids)
+        print(f"train_data.dst_node_ids ({len(train_data.dst_node_ids)} edges):\n", train_data.dst_node_ids)
+        print(f"val_data.src_node_ids ({len(val_data.src_node_ids)} edges):\n", val_data.src_node_ids)
+        print(f"val_data.dst_node_ids ({len(val_data.dst_node_ids)} edges):\n", val_data.dst_node_ids)
+        print(f"test_data.src_node_ids ({len(test_data.src_node_ids)} edges):\n", test_data.src_node_ids)
+        print(f"test_data.dst_node_ids ({len(test_data.dst_node_ids)} edges):\n", test_data.dst_node_ids)
         # exit(0)
+        
         # get data loaders
         train_idx_data_loader = get_idx_data_loader(indices_list=list(range(len(train_data.src_node_ids))), batch_size=args.batch_size, shuffle=False)
         # since the version 2 of tgbl-wiki has included all possible negative destinations for each positive edge, we set batch size to 1 to reduce the memory cost

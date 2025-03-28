@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 def readAmp(file,bbox):
     # TO-DO for CT: optimise reading binary file using bytes to avoid reading whole image into memory
     # bbox is in the form of [start_x, end_x, start_y, end_y]
-    # x = length, y = width
+    # Convention is x = length, y = width
     width, length = sizeFromXml(file)
     with open(file, 'rb') as f:
         data = np.fromfile(f, dtype='<f4')
@@ -16,18 +16,32 @@ def readAmp(file,bbox):
         amp2 = data2[:, 1::2]
     amp1 = amp1[bbox[0]:bbox[1]+1, bbox[2]:bbox[3]+1]
     amp2 = amp2[bbox[0]:bbox[1]+1, bbox[2]:bbox[3]+1]
+
     # Optionally disable plotting for batch processing
     # plt.imshow(amp1, cmap='gray', vmin=0, vmax=5)
     # plt.colorbar(); plt.title("Amplitude 1"); plt.show()
     # plt.imshow(amp2, cmap='gray', vmin=0, vmax=5)
     # plt.colorbar(); plt.title("Amplitude 2"); plt.show()
+
+    # Check for the presence of pixels with NaN values in the amplitude images
+    # If any pixels with NaN values are present, assign them a value of "0"
+    nan_infill_value = 0
+    has_nan_amp1 = np.isnan(amp1).any()
+    has_nan_amp2 = np.isnan(amp2).any()
+    if has_nan_amp1:
+        print(f"WARNING: Pixels with NaN values have been detected in the amplitude image and were converted to {nan_infill_value}.")
+        amp1 = np.nan_to_num(amp1, nan = nan_infill_value)
+    if has_nan_amp2:
+        print(f"WARNING: Pixels with NaN values have been detected in the amplitude image and were converted to {nan_infill_value}.")
+        amp2 = np.nan_to_num(amp2, nan = nan_infill_value)
+
     return amp1, amp2
 
 
 def readCor(file,bbox):
     # TO-DO for CT: optimise reading binary file using bytes to avoid reading whole image into memory
     # bbox is in the form of [start_x, end_x, start_y, end_y]
-    # x = length, y = width
+    # Convention is x = length, y = width
     width, length = sizeFromXml(file)
     with open(file, 'rb') as f:
         data = np.fromfile(f, dtype=np.float32)
@@ -35,9 +49,19 @@ def readCor(file,bbox):
         # Use the second band (odd rows) as the coherence (edge) feature
         cor = data2[1::2, :]
     cor = cor[bbox[0]:bbox[1]+1, bbox[2]:bbox[3]+1]
+
     # Optionally disable plotting for batch processing
     # plt.imshow(cor, cmap='gray', vmin=0, vmax=5)
     # plt.colorbar(); plt.title("Cor 2"); plt.show()
+
+    # Check for the presence of pixels with NaN values in the coherence image 
+    # If any pixels with NaN values are present, assign them a value of "0"
+    nan_infill_value = 0
+    has_nan_cor = np.isnan(cor).any()
+    if has_nan_cor:
+        print(f"WARNING: Pixels with NaN values have been detected in the coherence image and were converted to {nan_infill_value}.")
+        cor = np.nan_to_num(cor, nan = nan_infill_value)
+
     return cor
 
 
@@ -93,7 +117,7 @@ def prepareData(data_in_dir, data_out_dir, bbox, base_filename='b01_16r4alks'):
 
     # Get a list of subdirectories with names like "cor_YYYYMMDD_YYYYMMDD"
     subdirs = [d for d in os.listdir(data_in_dir) if d.startswith("cor_") and os.path.isdir(os.path.join(data_in_dir, d))]
-    subdirs.sort()  # sorting ensures that if the same date appears in multiple folders, the earliest is processed first
+    subdirs = sorted(subdirs, key=lambda x: (int(x.split("_")[2]), int(x.split("_")[1])))  # Prioritise sorting by the second date, then sorting by first date
 
     # Read all image pairs within the patch    
     for folder in subdirs:

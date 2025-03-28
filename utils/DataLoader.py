@@ -7,6 +7,7 @@ from tgb.linkproppred.dataset import LinkPropPredDataset
 from tgb.nodeproppred.dataset_pyg import PyGNodePropPredDataset
 from tgb.linkproppred.negative_sampler import NegativeEdgeSampler
 
+
 class CustomizedDataset(Dataset):
     def __init__(self, indices_list: list):
         """
@@ -83,6 +84,7 @@ data_num_nodes_map = {
     "tgbn-reddit": 11068
 }
 
+
 data_num_edges_map = {
     "tgbl-wiki": 157474,
     "tgbl-review": 4873540,
@@ -93,6 +95,7 @@ data_num_edges_map = {
     "tgbn-genre": 17858395,
     "tgbn-reddit": 27174118
 }
+
 
 def get_link_prediction_image_data(dataset_name: str):
     """
@@ -213,6 +216,136 @@ def get_link_prediction_image_data(dataset_name: str):
     
     return node_raw_features, edge_raw_features, full_data, train_data, val_data, test_data, eval_neg_edge_sampler, eval_metric_name
 
+
+def get_link_prediction_image_data_split_by_nodes(dataset_name: str):
+    """
+    Generate data for link prediction task using pre-generated image data.
+    Loads node features, edge features, and edge node pairs from the "image_data" folder.
+    Nodes are split (by time order) into training (70%), validation (20%), and test (10%) sets.
+    An extra padded node/edge is added (with index 0) for model computation.
+    
+    :param dataset_name: str, dataset name (for compatibility)
+    :return: node_raw_features, edge_raw_features (np.ndarray),
+             full_data, train_data, val_data, test_data (Data objects),
+             eval_neg_edge_sampler, eval_metric_name
+    """
+    # Load pre-generated data from the "image_data" folder in the current directory.
+    dataset_name = 'image_data'
+    save_dir = os.path.join(os.getcwd(), "image_data")
+    node_raw_features = np.load(os.path.join(save_dir, "node_features.npy"))  # shape: (num_nodes, feat_dim)
+    edge_raw_features = np.load(os.path.join(save_dir, "edge_features.npy"))  # shape: (num_edges, feat_dim)
+    # Load edge-node pairs; each line has "source<TAB>target"
+    edge_node_pairs = np.loadtxt(os.path.join(save_dir, "edge_node_pairs.txt"), delimiter="\t", dtype=np.int64)
+
+    # In our pre-generated data, we assume:
+    #   - node IDs in edge_node_pairs are 0-indexed.
+    #   - node_raw_features has shape (num_nodes, feat_dim) and edge_raw_features (num_edges, feat_dim)
+    num_nodes = node_raw_features.shape[0]
+    num_edges = edge_raw_features.shape[0]
+
+    # Extract source and destination node IDs from edge_node_pairs.
+    src_node_ids = edge_node_pairs[:, 0]    # Source node IDs (first column of the edge_node_pairs.txt)
+    dst_node_ids = edge_node_pairs[:, 1]    # Destination node IDs (second column of the edge_node_pairs.txt)
+
+    # Add padded node and padded edge (we add a zero row at index 0 for each).
+    node_raw_features = np.vstack([np.zeros((1, node_raw_features.shape[1])), node_raw_features])
+    edge_raw_features = np.vstack([np.zeros((1, edge_raw_features.shape[1])), edge_raw_features])
+
+    # Create edge IDs starting from 1 (since index 0 is the padded edge).
+    edge_ids = np.arange(1, num_edges + 1, dtype=np.int64)
+
+    # For edge timestamps, we use the dst node id as a proxy for time
+    node_interact_times = dst_node_ids.astype(np.float64)
+
+    # All observed edges are positive (label 1).
+    labels = np.ones_like(dst_node_ids, dtype=np.int64)
+
+    # Sort edges by timestamp (time order).
+    sort_idx = np.argsort(node_interact_times, kind="stable")
+    src_node_ids = src_node_ids[sort_idx]
+    dst_node_ids = dst_node_ids[sort_idx]
+    edge_ids = edge_ids[sort_idx]
+    labels = labels[sort_idx]
+    node_interact_times = node_interact_times[sort_idx]
+
+    # Create train/validation/test masks (edge-level split) based on time order.
+    # train_end = int(num_edges * 0.7)                   # Edge end-index for the training set
+    # val_end = int(num_edges * 0.9)                     # Edge end-index for the validation set
+    # test_end = int(num_edges * 1.0)                    # Edge end-index for the testing set
+    train_end_node = int(num_nodes * 0.7)              # Node end-index for the training set 
+    val_end_node = int(num_nodes * 0.9)                # Node end-index for the validation set
+    test_end_node = int(num_nodes * 1.0)               # Node end-index for the testing set
+
+    # Create boolean masks (initiate all the masks as false)
+    train_mask = np.zeros(num_edges, dtype=bool)        
+    val_mask = np.zeros(num_edges, dtype=bool)
+    test_mask = np.zeros(num_edges, dtype=bool)
+
+    # Assign True based on the node conditions
+    train_mask = (dst_node_ids <= train_end_node)
+    val_mask = (dst_node_ids > train_end_node) & (dst_node_ids <= val_end_node)
+    test_mask = (dst_node_ids > val_end_node) & (dst_node_ids <= test_end_node)
+
+    # train_mask[:train_end] = True
+    # val_mask[train_end:val_end] = True
+    # test_mask[val_end:test_end] = True
+
+    # (There is no negative sampler available in this case.)
+    eval_neg_edge_sampler = None
+    eval_metric_name = "AUC"
+
+    # # Check feature dimensions (use the same MAX_FEAT_DIM as in the original code).
+    # MAX_FEAT_DIM = 172
+    # if node_raw_features.shape[1] > MAX_FEAT_DIM:
+    #     raise ValueError(f'Node feature dimension in dataset {dataset_name} is bigger than {MAX_FEAT_DIM}!')
+    # if edge_raw_features.shape[1] > MAX_FEAT_DIM:
+    #     raise ValueError(f'Edge feature dimension in dataset {dataset_name} is bigger than {MAX_FEAT_DIM}!')
+
+    # Note: In the original pipeline, an extra padded node/edge was added.
+    # We already added the padded rows above, and we adjusted the node IDs accordingly.
+    
+    # Create Data objects.
+    full_data = Data(src_node_ids=src_node_ids, dst_node_ids=dst_node_ids,
+                     node_interact_times=node_interact_times, edge_ids=edge_ids, labels=labels)
+    train_data = Data(src_node_ids=src_node_ids[train_mask], dst_node_ids=dst_node_ids[train_mask],
+                      node_interact_times=node_interact_times[train_mask], edge_ids=edge_ids[train_mask],
+                      labels=labels[train_mask])
+    val_data = Data(src_node_ids=src_node_ids[val_mask], dst_node_ids=dst_node_ids[val_mask],
+                    node_interact_times=node_interact_times[val_mask], edge_ids=edge_ids[val_mask],
+                    labels=labels[val_mask])
+    test_data = Data(src_node_ids=src_node_ids[test_mask], dst_node_ids=dst_node_ids[test_mask],
+                     node_interact_times=node_interact_times[test_mask], edge_ids=edge_ids[test_mask],
+                     labels=labels[test_mask])
+
+    print("The dataset has {} interactions, involving {} different nodes".format(
+          full_data.num_interactions, full_data.num_unique_nodes))
+    print("The training dataset has {} interactions, involving {} different nodes".format(
+          train_data.num_interactions, train_data.num_unique_nodes))
+    print("The validation dataset has {} interactions, involving {} different nodes".format(
+          val_data.num_interactions, val_data.num_unique_nodes))
+    print("The test dataset has {} interactions, involving {} different nodes".format(
+          test_data.num_interactions, test_data.num_unique_nodes))
+    
+    # ---- Feature Dimension Checks and Printing ----
+    # Check that the node feature matrix is 2D and that every row has the same dimension.
+    if node_raw_features.ndim != 2:
+        print("Error: Node features should be a 2D array!")
+    else:
+        node_dim = node_raw_features.shape[1]
+        # In a well-formed numpy 2D array, every row has the same dimension.
+        print("Node feature matrix shape:", node_raw_features.shape)
+        print("All node feature rows have consistent dimension:", node_dim)
+
+    # Check the edge feature matrix similarly.
+    if edge_raw_features.ndim != 2:
+        print("Error: Edge features should be a 2D array!")
+    else:
+        edge_dim = edge_raw_features.shape[1]
+        print("Edge feature matrix shape:", edge_raw_features.shape)
+        print("All edge feature rows have consistent dimension:", edge_dim)
+    # --------------------------------------------------
+    
+    return node_raw_features, edge_raw_features, full_data, train_data, val_data, test_data, eval_neg_edge_sampler, eval_metric_name
 
 
 def get_link_prediction_tgb_data(dataset_name: str):
