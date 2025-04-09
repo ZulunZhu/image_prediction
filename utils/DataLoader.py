@@ -272,9 +272,9 @@ def get_link_prediction_image_data_split_by_nodes(dataset_name: str):
     # train_end = int(num_edges * 0.7)                   # Edge end-index for the training set
     # val_end = int(num_edges * 0.9)                     # Edge end-index for the validation set
     # test_end = int(num_edges * 1.0)                    # Edge end-index for the testing set
-    train_end_node = int(num_nodes * 0.7)              # Node end-index for the training set 
-    val_end_node = int(num_nodes * 0.9)                # Node end-index for the validation set
-    test_end_node = int(num_nodes * 1.0)               # Node end-index for the testing set
+    train_end_node = int(np.ceil(num_nodes * 0.7))       # Node end-index for the training set 
+    val_end_node = int(np.ceil(num_nodes * 0.9))         # Node end-index for the validation set
+    test_end_node = int(np.ceil(num_nodes * 1.0))        # Node end-index for the testing set
 
     # Create boolean masks (initiate all the masks as false)
     train_mask = np.zeros(num_edges, dtype=bool)        

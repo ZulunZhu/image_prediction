@@ -15,6 +15,9 @@ def get_link_prediction_args(is_evaluation: bool = False):
                         choices=["tgbl-wiki", "tgbl-review", "tgbl-coin", "tgbl-comment", "tgbl-flight"])
     parser.add_argument('--patch_length', type=int, default=224, help='patch length')
     parser.add_argument('--patch_overlap', type=int, default=204, help='patch overlap')
+    parser.add_argument('--temporal_window_index', type=int, default=1, help='temporal window index')
+    parser.add_argument('--temporal_window_width', type=int, default=10, help='temporal window width')
+    parser.add_argument('--temporal_window_stride', type=int, default=1, help='temporal window stride')
     parser.add_argument('--batch_size', type=int, default=20, help='batch size')
     parser.add_argument('--model_name', type=str, default='DyGFormer', help='name of the model, note that EdgeBank is only applicable for evaluation',
                         choices=['JODIE', 'DyRep', 'TGAT', 'TGN', 'CAWN', 'EdgeBank', 'TCL', 'GraphMixer', 'DyGFormer'])

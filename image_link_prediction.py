@@ -81,14 +81,23 @@ if __name__ == "__main__":
 
         # initialize train negative sampler
         # train_neg_edge_sampler = NegativeEdgeSampler(src_node_ids=train_data.src_node_ids, dst_node_ids=train_data.dst_node_ids)
+
         print(f"train_data.src_node_ids ({len(train_data.src_node_ids)} edges):\n", train_data.src_node_ids)
         print(f"train_data.dst_node_ids ({len(train_data.dst_node_ids)} edges):\n", train_data.dst_node_ids)
+        print(f"train_data.edge_ids ({len(train_data.edge_ids)} edges):\n", train_data.edge_ids)
+
         print(f"val_data.src_node_ids ({len(val_data.src_node_ids)} edges):\n", val_data.src_node_ids)
         print(f"val_data.dst_node_ids ({len(val_data.dst_node_ids)} edges):\n", val_data.dst_node_ids)
+        print(f"val_data.edge_ids ({len(val_data.edge_ids)} edges):\n", val_data.edge_ids)
+        
         print(f"test_data.src_node_ids ({len(test_data.src_node_ids)} edges):\n", test_data.src_node_ids)
         print(f"test_data.dst_node_ids ({len(test_data.dst_node_ids)} edges):\n", test_data.dst_node_ids)
+        print(f"test_data.edge_ids ({len(test_data.edge_ids)} edges):\n", test_data.edge_ids)
+
         # exit(0)
         
+        breakpoint()
+
         # get data loaders
         train_idx_data_loader = get_idx_data_loader(indices_list=list(range(len(train_data.src_node_ids))), batch_size=args.batch_size, shuffle=False)
         # since the version 2 of tgbl-wiki has included all possible negative destinations for each positive edge, we set batch size to 1 to reduce the memory cost
