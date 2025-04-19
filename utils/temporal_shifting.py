@@ -5,22 +5,23 @@ import re
 import shutil
 import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
 
 
-# ~~~~~~~~~~ SETTINGS (For Testing) ~~~~~~~~~~~~
+# ~~~~~~~~~~ SETTINGS (For Testing Only) ~~~~~~~~~~~~
 
-parent_dir = "/aria/zulun_sharing/TEST_KZ_TGNN_sharing_20250214/merged/cors_ALL"
+data_dir = "/aria/zulun_sharing/TEST_KZ_TGNN_sharing_20250214/merged/cors_ALL"
 temporal_window_index = 1   # Start at the first window iteration
-temporal_window_width = 10  # Number of timesteps in each window
+temporal_window_width = 10  # Number of adjacent time steps one window covers.
 temporal_window_stride = 1  # How far the window moves per step (set to `10` for disjoint windows)
 
 
-def extract_all_dates(parent_dir):
+def extract_all_dates(data_dir):
     """
-    Extracts unique timestamps from folder names in the parent directory.
+    Extracts unique timestamps from folder names in the data directory.
     """
     # List all subdirectories
-    folder_list = [f for f in os.listdir(parent_dir) if os.path.isdir(os.path.join(parent_dir, f))]
+    folder_list = [f for f in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, f))]
     
     # Extract unique dates from folder names
     all_dates = set()
@@ -38,8 +39,8 @@ def select_temporal_window_dates(timesteps, temporal_window_index, temporal_wind
     """
     Computes the subset of timesteps for a given sliding window position.
     """
-    temporal_window_start_feature_index = (temporal_window_index - 1) * temporal_window_stride          # -1 adjustment needed for 0-based indexing
-    temporal_window_end_feature_index = temporal_window_start_feature_index + temporal_window_width
+    temporal_window_start_feature_index = (temporal_window_index - 1) * temporal_window_stride              # -1 adjustment needed for 0-based indexing
+    temporal_window_end_feature_index = temporal_window_start_feature_index + temporal_window_width + 1     
 
     # Ensure the temporal window does not exceed available data
     if temporal_window_start_feature_index >= len(timesteps):
@@ -51,11 +52,11 @@ def select_temporal_window_dates(timesteps, temporal_window_index, temporal_wind
     return selected_dates
 
 
-def filter_folders(parent_dir, selected_dates, sorting_order = "second_date"):
+def filter_folders(data_dir, selected_dates, sorting_order = "second_date"):
     """
     Filters folders that contain only date pairs within the selected time window.
     """
-    folder_list = [f for f in os.listdir(parent_dir) if os.path.isdir(os.path.join(parent_dir, f))]
+    folder_list = [f for f in os.listdir(data_dir) if os.path.isdir(os.path.join(data_dir, f))]
     selected_dates_set = set(selected_dates)  # Convert to set for faster lookup
 
     # Initialise empty list to store filtered folders
@@ -81,12 +82,34 @@ def filter_folders(parent_dir, selected_dates, sorting_order = "second_date"):
     return [folder[0] for folder in filtered_folders]
 
 
+# Identify the skipped dates in the selected window
+def identify_skipped_timesteps(data_dir, expected_interval = 12):
+    """
+    Identify the skipped timesteps in the selected window.
+    """
+    # Extract all dates from the data directory
+    timesteps = extract_all_dates(data_dir)
+
+    # Convert to datetime objects
+    datetime_steps = [datetime.strptime(date, '%Y%m%d') for date in timesteps]
+    
+    # Acquire the list of intervals between the dates e.g., [12, 12, 12, 12, 12, 12, 12, 12, 12, 12]
+    intervals = [(datetime_steps[i+1] - datetime_steps[i]).days for i in range(len(datetime_steps)-1)]
+
+    # Count the number of missed intervals
+    missed_intervals = [i for i, days in enumerate(intervals) if days != expected_interval]
+    num_missed_intervals = len(missed_intervals)
+
+    return missed_intervals, num_missed_intervals
+
+
+
 # ~~~~~~~~~~ EXECUTING FUNCTIONS (For Testing) ~~~~~~~~~~~~
 
 if __name__ == "__main__":
-    timesteps = extract_all_dates(parent_dir)
+    timesteps = extract_all_dates(data_dir)
     selected_dates = select_temporal_window_dates(timesteps, temporal_window_index, temporal_window_width, temporal_window_stride)
-    filtered_folders = filter_folders(parent_dir, selected_dates, sorting_order = "second_date")
+    filtered_folders = filter_folders(data_dir, selected_dates, sorting_order = "second_date")
 
     # Print results
     print(f"\nTimesteps used for the selected window:\n", selected_dates)   # Display filtered dates for the selected window
@@ -94,3 +117,4 @@ if __name__ == "__main__":
     for index, folder in enumerate(filtered_folders):
         print(f"{index + 1}: {folder}")
         
+

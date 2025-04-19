@@ -18,7 +18,7 @@ def get_link_prediction_args(is_evaluation: bool = False):
     parser.add_argument('--temporal_window_index', type=int, default=1, help='temporal window index')
     parser.add_argument('--temporal_window_width', type=int, default=10, help='temporal window width')
     parser.add_argument('--temporal_window_stride', type=int, default=1, help='temporal window stride')
-    parser.add_argument('--batch_size', type=int, default=20, help='batch size')
+    parser.add_argument('--batch_size', type=int, default=55, help='batch size')
     parser.add_argument('--model_name', type=str, default='DyGFormer', help='name of the model, note that EdgeBank is only applicable for evaluation',
                         choices=['JODIE', 'DyRep', 'TGAT', 'TGN', 'CAWN', 'EdgeBank', 'TCL', 'GraphMixer', 'DyGFormer'])
     parser.add_argument('--gpu', type=int, default=0, help='number of gpu to use')

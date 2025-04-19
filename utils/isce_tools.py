@@ -256,7 +256,7 @@ def stitchPatchMean(merged_dir, patch_file, patch_bbox, patch_length):
     np.save(merged_wgt_file, merged_wgt)
     
     # Save figure of the updated merged image 
-    plt.imshow(merged_img, cmap='gray', vmin=0, vmax=255)
+    plt.imshow(merged_img, cmap='gray', vmin=0, vmax=1)
     plt.colorbar()
     save_path = merged_img_file[:-4] + ".png"
     plt.savefig(save_path)
@@ -351,7 +351,7 @@ def stitchPatchMedian(merged_dir, patch_list, pred_file, x, y, chunk_size):
         print(f"Updated merged image with chunk {chunk_id+1} in {merged_img_file}")
 
      # Plot and save merged image once all chunks are processed
-    plt.imshow(merged_img, cmap='gray', vmin=0, vmax=255)
+    plt.imshow(merged_img, cmap='gray', vmin=0, vmax=1)
     plt.colorbar()
     save_path = os.path.join(merged_dir, pred_file[:-3].replace("pred_", "pred_merged_img_")+'png')
     plt.savefig(save_path)
