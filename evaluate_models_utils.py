@@ -59,18 +59,42 @@ def evaluate_image_link_prediction_without_dataloader(model_name: str,
     
     evaluate_metrics = []
     
+    logger = logging.getLogger("Main_Logger")
+
     with torch.no_grad():
-        # Process all edges at once
-        print(f"Processing all {len(edge_ids_array)} edges at once for the '{eval_stage}' stage...")
+
+        # Process all edges at once for VALIDATION and TEST stages
+        # print(f"Processing all {len(edge_ids_array)} edges at once for the '{eval_stage}' stage...")
+        logger.info(f"Edges used for the '{eval_stage}' stage ({len(edge_ids_array)} edges): \n{edge_ids_array}\n")
+        print(f"Edges used for the '{eval_stage}' stage ({len(edge_ids_array)} edges): \n{edge_ids_array}\n")
         
-        # Convert edge IDs to indices
-        evaluate_data_indices = edge_ids_array - edge_ids_array[0]  # Convert to zero-based indices
-            
+        # Convert edge IDs to zero-based indices e.g. [ 0  1  2  3  4  5  ...]
+        # Used for subsetting the "master dataset" used for VALIDATION and TEST stages
+        evaluate_data_indices = edge_ids_array - edge_ids_array[0] 
+
+        logger.info(f"edge_ids_array for the '{eval_stage}' stage: \n{edge_ids_array}\n")
+        logger.info(f"Element from edge_ids_array[0] for the '{eval_stage}' stage: {edge_ids_array[0]}\n")
+        logger.info(f"evaluate_data_indices (indexing starts from zero) for the '{eval_stage}' stage:\n {evaluate_data_indices}\n") 
+
+        print(f"edge_ids_array for the '{eval_stage}' stage: \n{edge_ids_array}\n")
+        print(f"Element from edge_ids_array[0] for the '{eval_stage}' stage: {edge_ids_array[0]}\n")
+        print(f"evaluate_data_indices (indexing starts from zero) for the '{eval_stage}' stage:\n {evaluate_data_indices}\n")
+
         # Extract data for all edges
         batch_src_node_ids = evaluate_data.src_node_ids[evaluate_data_indices]
         batch_dst_node_ids = evaluate_data.dst_node_ids[evaluate_data_indices]
         batch_node_interact_times = evaluate_data.node_interact_times[evaluate_data_indices]
         batch_edge_ids = evaluate_data.edge_ids[evaluate_data_indices]
+
+        logger.info(f"batch_src_node_ids for the '{eval_stage}' stage: \n{batch_src_node_ids}\n")
+        logger.info(f"batch_dst_node_ids for the '{eval_stage}' stage: \n{batch_dst_node_ids}\n")
+        logger.info(f"batch_node_interact_times for the '{eval_stage}' stage: \n{batch_node_interact_times}\n")
+        logger.info(f"batch_edge_ids for the '{eval_stage}' stage: \n{batch_edge_ids}\n")
+
+        print(f"batch_src_node_ids for the '{eval_stage}' stage: \n{batch_src_node_ids}\n")
+        print(f"batch_dst_node_ids for the '{eval_stage}' stage: \n{batch_dst_node_ids}\n")
+        print(f"batch_node_interact_times for the '{eval_stage}' stage: \n{batch_node_interact_times}\n")
+        print(f"batch_edge_ids for the '{eval_stage}' stage: \n{batch_edge_ids}\n")
 
         # Compute node embeddings based on model type
         if model_name in ['TGAT', 'CAWN', 'TCL']:
@@ -109,8 +133,11 @@ def evaluate_image_link_prediction_without_dataloader(model_name: str,
         # Compute positive probabilities
         positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).sigmoid().cpu().numpy()
         
-        # Compute loss
-        loss = np.mean(np.abs(positive_probabilities - edge_raw_features[evaluate_data_indices]))
+        print(f"Ground Truth (Dimensions: {edge_raw_features[edge_ids_array].shape}): \n{edge_raw_features[edge_ids_array]}\n")
+        print(f"Prediction (Dimensions: {positive_probabilities.shape}): \n{positive_probabilities}\n")
+
+        # Compute loss (using MAE / L1 loss here)
+        loss = np.mean(np.abs(positive_probabilities - edge_raw_features[edge_ids_array]))
         evaluate_metrics.append({f'{eval_stage} MAE loss': loss})
         
         # For test_end stage, generate visualization
@@ -122,12 +149,16 @@ def evaluate_image_link_prediction_without_dataloader(model_name: str,
 
             # Process prediction results
             pred_embeddings = positive_probabilities
-            gt_embeddings = edge_raw_features[evaluate_data_indices]
+            gt_embeddings = edge_raw_features[edge_ids_array]
 
             n, L = pred_embeddings.shape
             # Compute an approximate 2D shape for each flattened embedding
             H = int(np.floor(np.sqrt(L)))
             W = int(np.ceil(L / H))
+
+            print(f"pred_embeddings: (Dimensions: {pred_embeddings.shape})\n {pred_embeddings}\n")
+            print(f"gt_embeddings: (Dimensions: {gt_embeddings.shape})\n {gt_embeddings}\n")
+            print(f"Shape of embeddings: Height (H): {H}, Width (W): {W}\n")
 
             def reshape_to_2d(flat_sample, H, W):
                 """
@@ -301,9 +332,9 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
             positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).sigmoid().cpu().numpy()
             # get negative probabilities, Tensor, shape (batch_size * num_negative_samples_per_node, )
             # print("positive_probabilities", positive_probabilities.shape)
-            # print("edge_raw_features[evaluate_data_indices]", edge_raw_features[evaluate_data_indices].shape)
+            # print("edge_raw_features[edge_ids_array]", edge_raw_features[edge_ids_array].shape)
             # Assuming positive_probabilities is already a NumPy array
-            loss = np.mean(np.abs(positive_probabilities - edge_raw_features[evaluate_data_indices]))
+            loss = np.mean(np.abs(positive_probabilities - edge_raw_features[edge_ids_array]))
 
 
             # for sample_idx in range(len(batch_src_node_ids)):

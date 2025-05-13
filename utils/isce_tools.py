@@ -1,5 +1,6 @@
 import os
 import numpy as np
+import pandas as pd
 import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
 
@@ -176,6 +177,12 @@ def prepareData(data_in_dir, data_out_dir, bbox, base_filename='b01_16r4alks'):
             f.write(f"{date_to_id[date]} {date}\n")
     print(f"Saved node mapping to '{mapping_file}'.")
 
+    # Save the node mapping to a dataframe
+    node_mapping = pd.DataFrame({
+        'nodeID': [date_to_id[date] for date in sorted_dates],
+        'date': sorted_dates
+    })
+
     # Save the node and edge features as NumPy arrays
     node_features_file = os.path.join(save_dir, "node_features.npy")
     edge_features_file = os.path.join(save_dir, "edge_features.npy")
@@ -200,7 +207,7 @@ def prepareData(data_in_dir, data_out_dir, bbox, base_filename='b01_16r4alks'):
     print(f"Number of edges: {num_edges}")
 
     # Optionally return the features and mapping information
-    return node_features, edge_features, date_to_id, edge_node_pairs
+    return node_features, edge_features, date_to_id, edge_node_pairs, node_mapping
 
 
 def stitchPatchMean(merged_dir, patch_file, patch_bbox, patch_length):

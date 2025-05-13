@@ -103,6 +103,53 @@ def identify_skipped_timesteps(data_dir, expected_interval = 12):
     return missed_intervals, num_missed_intervals
 
 
+def find_furthest_node_within_temporal_baseline(node_mapping: pd.DataFrame, 
+                                                 window_src_node_start: int, 
+                                                 temporal_window_width: int = 120):
+    """
+    Based on the node-date mapping and the "window_src_node_start" ID, return the corresponding "window_dst_node_end" ID 
+    within the bounds defined by the maximum temporal baseline (temporal_window_width).
+
+    Inputs:
+    - node_mapping: Pandas DataFrame containing the mapping of node IDs to dates.
+    - window_src_node_start: ID of the starting window source node.
+    - temporal_window_width: Maximum temporal baseline in days. 
+
+    Returns:
+    - window_dst_node_end: ID of the ending destination node within the maximum temporal baseline.
+    """
+    # Convert 'date' column to datetime if necessary
+    if node_mapping['date'].dtype != 'datetime64[ns]':
+        node_mapping['date'] = pd.to_datetime(node_mapping['date'].astype(str), format='%Y%m%d')
+
+    # Ensure the source node exists in the mapping
+    if window_src_node_start not in node_mapping['nodeID'].values:
+        raise ValueError(f"node_id {window_src_node_start} not found in node_mapping.")
+    
+    # Retrieve the date corresponding to the source node
+    target_date = pd.to_datetime(node_mapping.loc[node_mapping['nodeID'] == window_src_node_start, 'date'].values[0]).to_pydatetime()
+    # target_date = node_mapping.loc[node_mapping['nodeID'] == window_src_node_start, 'date'].values[0]
+
+    # Compute the maximum allowed temporal offset
+    max_temporal_baseline = temporal_window_width
+    max_offset = timedelta(days=max_temporal_baseline)
+    upper_bound = target_date + max_offset
+
+    # Identify all candidate nodes within the temporal baseline ahead of the source
+    valid_nodes = node_mapping[
+        (node_mapping['date'] > target_date) & 
+        (node_mapping['date'] <= upper_bound)
+    ].copy()
+
+    if valid_nodes.empty:
+        return None  # Or: raise ValueError("No valid destination node found within the forward time window.")
+    
+    # Select the node with the maximum (furthest forward) date
+    window_dst_node_end = valid_nodes.loc[valid_nodes['date'].idxmax()]
+
+    return int(window_dst_node_end['nodeID'])
+
+
 
 # ~~~~~~~~~~ EXECUTING FUNCTIONS (For Testing) ~~~~~~~~~~~~
 

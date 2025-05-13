@@ -91,13 +91,13 @@ ax.set_xticklabels(tick_labels, rotation=90)
 ax.set_yticklabels(tick_labels)
 
 # Set axis labels and title
-ax.set_xlabel("SLC Acquisition Dates")
-ax.set_ylabel("SLC Acquisition Dates")
-ax.set_title("Sentinel-1 SLCs and Coherence Pairs")
+ax.set_xlabel("Dates")
+ax.set_ylabel("Dates")
+ax.set_title("SLC Acquisitions and Coherence Images")
 
 # Legend entries for SLC Acquisition (squares) and Coherence Pairs (dots)
 slc_legend = Line2D([0], [0], marker='s', color='w', markerfacecolor='black', markersize=8, label='SLC Acquisition')
-coherence_legend = Line2D([0], [0], marker='o', color='w', markerfacecolor='blue', markersize=8, label='Coherence Pair')
+coherence_legend = Line2D([0], [0], marker='o', color='w', markerfacecolor='blue', markersize=8, label='Coherence Image')
 
 # Add both legend entries to the same legend
 ax.legend(handles=[slc_legend, coherence_legend], loc='upper right')

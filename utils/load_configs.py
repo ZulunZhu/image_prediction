@@ -15,8 +15,7 @@ def get_link_prediction_args(is_evaluation: bool = False):
                         choices=["tgbl-wiki", "tgbl-review", "tgbl-coin", "tgbl-comment", "tgbl-flight"])
     parser.add_argument('--patch_length', type=int, default=224, help='patch length')
     parser.add_argument('--patch_overlap', type=int, default=204, help='patch overlap')
-    parser.add_argument('--temporal_window_index', type=int, default=1, help='temporal window index')
-    parser.add_argument('--temporal_window_width', type=int, default=10, help='temporal window width')
+    parser.add_argument('--temporal_window_width', type=int, default=120, help='temporal window width in number of days')
     parser.add_argument('--temporal_window_stride', type=int, default=1, help='temporal window stride')
     parser.add_argument('--batch_size', type=int, default=55, help='batch size')
     parser.add_argument('--model_name', type=str, default='DyGFormer', help='name of the model, note that EdgeBank is only applicable for evaluation',
@@ -53,6 +52,8 @@ def get_link_prediction_args(is_evaluation: bool = False):
     parser.add_argument('--load_best_configs', action='store_true', default=False, help='whether to load the best configurations')
     parser.add_argument('--stitch_method', type=str, default='median', choices=['mean', 'median'], help='method to handle overlap areas when stitching patches')
     parser.add_argument('--stitch_chunk_size', type=int, default=500, help='chunk size used for median stitching')
+    parser.add_argument('--min_num_total_edges_valid_training_window', type=int, default=40, help='number of edges in total required for each temporal sliding window for it to undergo training. If not met, skip training for the window.')
+    parser.add_argument('--min_num_new_edges_valid_training_window', type=int, default=5, help='number of new edges required for each temporal sliding window for it to undergo training. If not met, skip training for the window.')
 
     try:
         args = parser.parse_args()

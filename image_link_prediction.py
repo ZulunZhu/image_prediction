@@ -4,6 +4,7 @@ import sys
 import os
 from tqdm import tqdm
 import numpy as np
+import pandas as pd
 import warnings
 import shutil
 import json
@@ -26,6 +27,7 @@ from utils.utils import get_neighbor_sampler, NegativeEdgeSampler
 from evaluate_models_utils import evaluate_model_link_prediction,evaluate_image_link_prediction, evaluate_image_link_prediction_without_dataloader
 from utils.DataLoader import get_idx_data_loader, get_link_prediction_tgb_data, get_link_prediction_image_data, \
 get_link_prediction_image_data_split_by_nodes, load_edge_node_pairs, get_sliding_window_data_loader
+from utils.temporal_shifting import find_furthest_node_within_temporal_baseline
 from utils.EarlyStopping import EarlyStopping
 from utils.load_configs import get_link_prediction_args
 
@@ -65,7 +67,7 @@ if __name__ == "__main__":
             os.makedirs(patch_dir)
 
         # process dataset for the patch
-        prepareData(data_dir, patch_dir, patch_bbox, base_filename='b01_16r4alks')
+        _, _, _, _, node_mapping = prepareData(data_dir, patch_dir, patch_bbox, base_filename='b01_16r4alks')
 
         # go into the patch directory
         os.chdir(patch_dir)
@@ -102,8 +104,8 @@ if __name__ == "__main__":
         print(f"test_data.edge_ids ({len(test_data.edge_ids)} edges):\n", test_data.edge_ids, "\n")
 
         # Compute the desired batch size (number of edges)
-        # By default, 1 date is paired with the next 10 dates, hence 11 dates in total for one temporal window.
-        batch_size = math.comb(args.temporal_window_width + 1, 2)   # Max number of edges in one temporal window.
+        # By default, 1 date is paired with the next 10 dates, hence 11 dates in total for one temporal window
+        # batch_size = math.comb(args.temporal_window_num_neighbours + 1, 2)   # Max number of edges in one temporal window
 
         # training nodes
         train_data_src_node_start = min(train_data.src_node_ids)
@@ -127,7 +129,7 @@ if __name__ == "__main__":
         edge_node_pairs = load_edge_node_pairs('./image_data/edge_node_pairs.txt')
 
         # Set up the patch logging directory
-        patch_log_dir = f"./logs/{args.model_name}/{args.dataset_name}/patch_{patch_id+1:04d}"
+        patch_log_dir = f"./logs/patch_{patch_id+1:04d}/{args.model_name}/{args.dataset_name}"
         os.makedirs(patch_log_dir, exist_ok=True)
 
         # Storage arrays for metrics
@@ -139,16 +141,17 @@ if __name__ == "__main__":
             # Set random seed. The seed is set to be the same as the run number.
             set_random_seed(seed=run)
             args.seed = run
-            args.save_model_name = f'{args.model_name}_seed{args.seed}'
+            args.save_model_name = f"{args.model_name}_seed{args.seed}_{time.strftime('%Y%m%d_%H%M%S')}"
 
             # Set up logger for this run inside the patch-specific directory
             run_log_dir = os.path.join(patch_log_dir, args.save_model_name)
             os.makedirs(run_log_dir, exist_ok=True)
-            logger = logging.getLogger(f"{args.model_name}_patch_{patch_id+1:04d}_run_{run+1}")
+            # logger = logging.getLogger(f"{args.model_name}_patch_{patch_id+1:04d}_run_{run+1}")
+            logger = logging.getLogger("Main_Logger")
             logger.setLevel(logging.DEBUG)
             logger.handlers = []  # Clear any existing handlers
             # create file handler that logs DEBUG and higher level messages
-            fh = logging.FileHandler(os.path.join(run_log_dir, f"{time.strftime('%Y%m%d_%H%M%S')}.log"))
+            fh = logging.FileHandler(os.path.join(run_log_dir, f"logger_{time.strftime('%Y%m%d_%H%M%S')}.log"))
             # fh = logging.FileHandler(os.path.join(run_log_dir, f"{str(time.time())}.log"))    # Original log nomenclature
             fh.setLevel(logging.DEBUG)
             # create console handler with a higher log level (WARNING and above)
@@ -211,7 +214,7 @@ if __name__ == "__main__":
 
             model = convert_to_gpu(model, device=args.device)
 
-            save_model_folder = f"./saved_models/{args.model_name}/{args.dataset_name}/{args.save_model_name}/"
+            save_model_folder = f"./saved_models/patch_{patch_id+1:04d}/{args.model_name}/{args.dataset_name}/{args.save_model_name}/"
             shutil.rmtree(save_model_folder, ignore_errors=True)
             os.makedirs(save_model_folder, exist_ok=True)
 
@@ -239,190 +242,221 @@ if __name__ == "__main__":
                     # reinitialize memory of memory-based models at the start of each epoch
                     model[0].memory_bank.__init_memory_bank__()
 
-                # Storage arrays for train losses and metrics
-                train_losses, train_metrics = [], []        
-                
-                # Progress bar
-                # train_data_unique_dst_node_ids_tqdm = tqdm(np.unique(train_data.dst_node_ids), ncols=120, dynamic_ncols=True)
+                ###### PREPARATION FOR TRAINING #######
 
-                # for train_window_idx in enumerate (train_data_unique_dst_node_ids_tqdm):
-                for train_window_idx in enumerate(range(1,train_data_dst_node_end+1)):
+                # Setting up the training exclusion list (python ids of the edges to be excluded from training)
+                # If no edges are to be excluded, the list should be empty
+                train_exclusion_list = []   
+
+                # Storage arrays for train losses and metrics
+                train_losses, train_metrics = [], [] 
+
+                # Storage arrays for (1) train_data_indices (python indices for the training data), 
+                # and (2) number of edges in each training window. 
+                storage_train_window_train_data_indices = [np.array([])]       # Python indices for the training data in each training window.
+                storage_train_window_num_edges = [0]                           # Number of edges in each training window. Initiate with 0 for the 0th window.
+                
+                # Iterating through the training windows with a stride of 1 per iteration (default)
+                for train_window_idx in enumerate(range(train_data_src_node_start, train_data_dst_node_end + 1, args.temporal_window_stride)):
                     
                     print(f"\n********** PATCH {patch_id + 1:04d} | RUN {run + 1} | EPOCH {epoch + 1} | TRAINING WINDOW {train_window_idx[0] + 1} **********\n")
                     logger.info(f"********** PATCH {patch_id + 1:04d} | RUN {run + 1} | EPOCH {epoch + 1} | TRAINING WINDOW {train_window_idx[0] + 1} **********")
 
-                    # Get the start and end nodes of the temporal window for each iteration
-                    # Attempt subsetting by first assuming that there is no irregularity in node & edge features (e.g. missing dates) within the training data
+                    # Get the start and end of the src and dst nodes of the temporal window in the specified iteration
                     train_window_src_node_start = train_data_src_node_start + train_window_idx[0]
-                    train_window_src_node_end = train_data_src_node_start + train_window_idx[0] + (args.temporal_window_width - 1)    # -1 to account for the first date
-                    train_window_dst_node_start = train_data_dst_node_start + train_window_idx[0]
-                    train_window_dst_node_end = train_data_dst_node_start + train_window_idx[0] + (args.temporal_window_width - 1)    # -1 to account for the first date
+                    train_window_dst_node_start = train_window_src_node_start + 1
+                    train_window_dst_node_end = find_furthest_node_within_temporal_baseline(
+                                                    node_mapping = node_mapping,
+                                                    window_src_node_start = train_window_src_node_start,
+                                                    temporal_window_width = args.temporal_window_width
+                                                    )
+                    train_window_src_node_end = train_window_dst_node_end - 1
 
-                    # Get the training data indices for the current temporal window (NOT the same as edge_ids!)
+                    # Get the train_data_indices for the current temporal window
+                    # These are the python reference indices, NOT the exact edge ids
                     train_data_indices = np.where(((train_data.src_node_ids >= train_window_src_node_start) & 
                                                   (train_data.src_node_ids <= train_window_src_node_end)) & 
                                                   ((train_data.dst_node_ids >= train_window_dst_node_start) & 
                                                   (train_data.dst_node_ids <= train_window_dst_node_end)))[0]
                     
-                    # Check for irregularities in node & edge features (e.g. missing dates) within the training data by comparing to "batch_size"
-                    # batch_size = number of edges in the temporal window (total_num_nodes choose 2)
-                    if len(train_data_indices) != batch_size:
+                    # Remove the elements from the train_data_indices that are in the training exclusion list
+                    train_data_indices = train_data_indices[~np.isin(train_data_indices, train_exclusion_list)]
+                    
+                    # Append (1) the train_data_indices, and (2) the number of edges in the current training window to the storage arrays
+                    storage_train_window_train_data_indices.append(train_data_indices)
+                    storage_train_window_num_edges.append(len(train_data_indices))  
+
+                    # Determine if the temporal sliding window should undergo training based on 2 criteria:
+                    # (1) Number of total edges in the temporal window must be >= args.min_num_total_edges_valid_training_window
+                    # (2) Number of new edges in the temporal window must be >= args.min_num_new_edges_valid_training_window
+
+                    # Get numbers of total and new edges in the training window
+                    train_window_num_total_edges = len(storage_train_window_train_data_indices[train_window_idx[0] + 1])
+                    train_window_num_new_edges = len(set(storage_train_window_train_data_indices[(train_window_idx[0] + 1)]) - set(storage_train_window_train_data_indices[train_window_idx[0]]))
+
+                    # Check if the current window is valid for training based on the 2 criteria
+                    if (train_window_num_total_edges >= args.min_num_total_edges_valid_training_window) and \
+                        (train_window_num_new_edges >= args.min_num_new_edges_valid_training_window):
+
+                        logger.info(f"Training for WINDOW {train_window_idx[0] + 1} begins. | Total Edges: {train_window_num_total_edges} ({train_window_num_new_edges} new)")
+                        print (f"Training for WINDOW {train_window_idx[0] + 1} begins. | Total Edges: {train_window_num_total_edges} ({train_window_num_new_edges} new)\n")
+
+                        ######## TRAINING BEGINS ########
+
+                        # Get the batch of training data for specified temporal window only
+                        batch_src_node_ids, batch_dst_node_ids, batch_node_interact_times, batch_edge_ids = \
+                            train_data.src_node_ids[train_data_indices], train_data.dst_node_ids[train_data_indices], \
+                            train_data.node_interact_times[train_data_indices], train_data.edge_ids[train_data_indices]    
                         
-                        # # [TO CHANGE] Subset the training data based on modified start and end node indices
-                        # train_window_src_node_start = train_data_src_node_start + train_window_idx[0]
-                        # train_window_src_node_end = train_data_src_node_start + train_window_idx[0] + (args.temporal_window_width - 1)    # -1 to account for the first date
-                        # train_window_dst_node_start = train_data_dst_node_start + train_window_idx[0]
-                        # train_window_dst_node_end = train_data_dst_node_start + train_window_idx[0] + (args.temporal_window_width - 1)    # -1 to account for the first date
+                        # Logging information about the specified temporal window
+                        logger.info(f"train_window_idx: {train_window_idx[0] + 1}")
+                        logger.info(f"train_window_src_node_start: {train_window_src_node_start}")
+                        logger.info(f"train_window_src_node_end: {train_window_src_node_end}")
+                        logger.info(f"train_window_dst_node_start: {train_window_dst_node_start}")
+                        logger.info(f"train_window_dst_node_end: {train_window_dst_node_end}")
+                        logger.info(f"train_data_indices: {train_data_indices}")
+                        logger.info(f"batch_src_node_ids: {batch_src_node_ids}")
+                        logger.info(f"batch_dst_node_ids: {batch_dst_node_ids}")
+                        logger.info(f"batch_node_interact_times: {batch_node_interact_times}")
+                        logger.info(f"batch_edge_ids ({len(batch_edge_ids)} edges): {batch_edge_ids}")
 
-                        # # Get the training data indices for the current temporal window
-                        # train_data_indices = np.where(((train_data.src_node_ids >= train_window_src_node_start) & 
-                        #                                 (train_data.src_node_ids <= train_window_src_node_end)) & 
-                        #                                 ((train_data.dst_node_ids >= train_window_dst_node_start) & 
-                        #                                 (train_data.dst_node_ids <= train_window_dst_node_end)))[0]
+                        print(f"train_window_src_node_start: {train_window_src_node_start}")
+                        print(f"train_window_src_node_end: {train_window_src_node_end}")
+                        print(f"train_window_dst_node_start: {train_window_dst_node_start}")
+                        print(f"train_window_dst_node_end: {train_window_dst_node_end}")
+                        print(f"batch_edge_ids ({len(batch_edge_ids)} edges): \n{batch_edge_ids}\n")
 
-                        pass    # [PLACEHOLDER pass COMMAND TO BE REMOVED IN FUTURE]
+                        # we need to compute for positive and negative edges respectively, because the new sampling strategy (for evaluation) allows the negative source nodes to be
+                        # different from the source nodes, this is different from previous works that just replace destination nodes with negative destination nodes
+                        if args.model_name in ['TGAT', 'CAWN', 'TCL']:
+                            # get temporal embedding of source and destination nodes
+                            # two Tensors, with shape (batch_size, output_dim)
+                            batch_src_node_embeddings, batch_dst_node_embeddings = \
+                                model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_src_node_ids,
+                                                                                dst_node_ids=batch_dst_node_ids,
+                                                                                node_interact_times=batch_node_interact_times,
+                                                                                num_neighbors=args.num_neighbors)
 
-                    # Get the batch of training data for specified temporal window only
-                    batch_src_node_ids, batch_dst_node_ids, batch_node_interact_times, batch_edge_ids = \
-                        train_data.src_node_ids[train_data_indices], train_data.dst_node_ids[train_data_indices], \
-                        train_data.node_interact_times[train_data_indices], train_data.edge_ids[train_data_indices]    
-                    
-                    # Logging information about the specified temporal window
-                    logger.info(f"train_window_idx: {train_window_idx[0] + 1}")
-                    logger.info(f"train_window_src_node_start: {train_window_src_node_start}")
-                    logger.info(f"train_window_src_node_end: {train_window_src_node_end}")
-                    logger.info(f"train_window_dst_node_start: {train_window_dst_node_start}")
-                    logger.info(f"train_window_dst_node_end: {train_window_dst_node_end}")
-                    logger.info(f"train_data_indices: {train_data_indices}")
-                    logger.info(f"batch_src_node_ids: {batch_src_node_ids}")
-                    logger.info(f"batch_dst_node_ids: {batch_dst_node_ids}")
-                    logger.info(f"batch_node_interact_times: {batch_node_interact_times}")
-                    logger.info(f"batch_edge_ids ({len(batch_edge_ids)} edges): {batch_edge_ids}")
+                            # get temporal embedding of negative source and negative destination nodes
+                            # two Tensors, with shape (batch_size, output_dim)
+                            # batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
+                            #     model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
+                            #                                                       dst_node_ids=batch_neg_dst_node_ids,
+                            #                                                       node_interact_times=batch_node_interact_times,
+                            #                                                       num_neighbors=args.num_neighbors)
+                        elif args.model_name in ['JODIE', 'DyRep', 'TGN']:
+                            # note that negative nodes do not change the memories while the positive nodes change the memories,
+                            # we need to first compute the embeddings of negative nodes for memory-based models
+                            # get temporal embedding of negative source and negative destination nodes
+                            # two Tensors, with shape (batch_size, output_dim)
+                            # batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
+                            #     model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
+                            #                                                       dst_node_ids=batch_neg_dst_node_ids,
+                            #                                                       node_interact_times=batch_node_interact_times,
+                            #                                                       edge_ids=None,
+                            #                                                       edges_are_positive=False,
+                            #                                                       num_neighbors=args.num_neighbors)
 
-                    print(f"train_window_src_node_start: {train_window_src_node_start}")
-                    print(f"train_window_src_node_end: {train_window_src_node_end}")
-                    print(f"train_window_dst_node_start: {train_window_dst_node_start}")
-                    print(f"train_window_dst_node_end: {train_window_dst_node_end}")
-                    print(f"batch_edge_ids ({len(batch_edge_ids)} edges): \n{batch_edge_ids}\n")
+                            # get temporal embedding of source and destination nodes
+                            # two Tensors, with shape (batch_size, output_dim)
+                            batch_src_node_embeddings, batch_dst_node_embeddings = \
+                                model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_src_node_ids,
+                                                                                dst_node_ids=batch_dst_node_ids,
+                                                                                node_interact_times=batch_node_interact_times,
+                                                                                edge_ids=batch_edge_ids,
+                                                                                edges_are_positive=True,
+                                                                                num_neighbors=args.num_neighbors)
+                        elif args.model_name in ['GraphMixer']:
+                            # get temporal embedding of source and destination nodes
+                            # two Tensors, with shape (batch_size, output_dim)
+                            batch_src_node_embeddings, batch_dst_node_embeddings = \
+                                model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_src_node_ids,
+                                                                                dst_node_ids=batch_dst_node_ids,
+                                                                                node_interact_times=batch_node_interact_times,
+                                                                                num_neighbors=args.num_neighbors,
+                                                                                time_gap=args.time_gap)
 
-                    # we need to compute for positive and negative edges respectively, because the new sampling strategy (for evaluation) allows the negative source nodes to be
-                    # different from the source nodes, this is different from previous works that just replace destination nodes with negative destination nodes
-                    if args.model_name in ['TGAT', 'CAWN', 'TCL']:
-                        # get temporal embedding of source and destination nodes
-                        # two Tensors, with shape (batch_size, output_dim)
-                        batch_src_node_embeddings, batch_dst_node_embeddings = \
-                            model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_src_node_ids,
-                                                                            dst_node_ids=batch_dst_node_ids,
-                                                                            node_interact_times=batch_node_interact_times,
-                                                                            num_neighbors=args.num_neighbors)
+                            # get temporal embedding of negative source and negative destination nodes
+                            # # two Tensors, with shape (batch_size, output_dim)
+                            # batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
+                            #     model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
+                            #                                                       dst_node_ids=batch_neg_dst_node_ids,
+                            #                                                       node_interact_times=batch_node_interact_times,
+                            #                                                       num_neighbors=args.num_neighbors,
+                            #                                                       time_gap=args.time_gap)
+                        elif args.model_name in ['DyGFormer']:
+                            # get temporal embedding of source and destination nodes
+                            # two Tensors, with shape (batch_size, output_dim)
+                            batch_src_node_embeddings, batch_dst_node_embeddings = \
+                                model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_src_node_ids,
+                                                                                dst_node_ids=batch_dst_node_ids,
+                                                                                node_interact_times=batch_node_interact_times)
 
-                        # get temporal embedding of negative source and negative destination nodes
-                        # two Tensors, with shape (batch_size, output_dim)
-                        # batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
-                        #     model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
-                        #                                                       dst_node_ids=batch_neg_dst_node_ids,
-                        #                                                       node_interact_times=batch_node_interact_times,
-                        #                                                       num_neighbors=args.num_neighbors)
-                    elif args.model_name in ['JODIE', 'DyRep', 'TGN']:
-                        # note that negative nodes do not change the memories while the positive nodes change the memories,
-                        # we need to first compute the embeddings of negative nodes for memory-based models
-                        # get temporal embedding of negative source and negative destination nodes
-                        # two Tensors, with shape (batch_size, output_dim)
-                        # batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
-                        #     model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
-                        #                                                       dst_node_ids=batch_neg_dst_node_ids,
-                        #                                                       node_interact_times=batch_node_interact_times,
-                        #                                                       edge_ids=None,
-                        #                                                       edges_are_positive=False,
-                        #                                                       num_neighbors=args.num_neighbors)
+                            # get temporal embedding of negative source and negative destination nodes
+                            # two Tensors, with shape (batch_size, output_dim)
+                            # batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
+                            #     model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
+                            #                                                       dst_node_ids=batch_neg_dst_node_ids,
+                            #                                                       node_interact_times=batch_node_interact_times)
+                        else:
+                            raise ValueError(f"Wrong value for model_name {args.model_name}!")
+                        # get positive and negative probabilities, shape (batch_size, )
+                        # positive_probabilities = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings).squeeze(dim=-1).sigmoid()
+                        # negative_probabilities = model[1](input_1=batch_neg_src_node_embeddings, input_2=batch_neg_dst_node_embeddings).squeeze(dim=-1).sigmoid()
 
-                        # get temporal embedding of source and destination nodes
-                        # two Tensors, with shape (batch_size, output_dim)
-                        batch_src_node_embeddings, batch_dst_node_embeddings = \
-                            model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_src_node_ids,
-                                                                            dst_node_ids=batch_dst_node_ids,
-                                                                            node_interact_times=batch_node_interact_times,
-                                                                            edge_ids=batch_edge_ids,
-                                                                            edges_are_positive=True,
-                                                                            num_neighbors=args.num_neighbors)
-                    elif args.model_name in ['GraphMixer']:
-                        # get temporal embedding of source and destination nodes
-                        # two Tensors, with shape (batch_size, output_dim)
-                        batch_src_node_embeddings, batch_dst_node_embeddings = \
-                            model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_src_node_ids,
-                                                                            dst_node_ids=batch_dst_node_ids,
-                                                                            node_interact_times=batch_node_interact_times,
-                                                                            num_neighbors=args.num_neighbors,
-                                                                            time_gap=args.time_gap)
+                        # predicts = torch.cat([positive_probabilities, negative_probabilities], dim=0)
+                        # labels = torch.cat([torch.ones_like(positive_probabilities), torch.zeros_like(negative_probabilities)], dim=0)
 
-                        # get temporal embedding of negative source and negative destination nodes
-                        # # two Tensors, with shape (batch_size, output_dim)
-                        # batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
-                        #     model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
-                        #                                                       dst_node_ids=batch_neg_dst_node_ids,
-                        #                                                       node_interact_times=batch_node_interact_times,
-                        #                                                       num_neighbors=args.num_neighbors,
-                        #                                                       time_gap=args.time_gap)
-                    elif args.model_name in ['DyGFormer']:
-                        # get temporal embedding of source and destination nodes
-                        # two Tensors, with shape (batch_size, output_dim)
-                        batch_src_node_embeddings, batch_dst_node_embeddings = \
-                            model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_src_node_ids,
-                                                                            dst_node_ids=batch_dst_node_ids,
-                                                                            node_interact_times=batch_node_interact_times)
+                        # loss = loss_func(input=predicts, target=labels)
+                        
+                        # Get the predicted edge feature (without applying sigmoid, as we're doing regression)
+                        predicted_edge_feature = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings)
+                        print(f"predicted_edge_feature.shape: {predicted_edge_feature.shape}\n")
+                        # print("edge_raw_features[train_data_indices]", edge_raw_features[train_data_indices].shape)
 
-                        # get temporal embedding of negative source and negative destination nodes
-                        # two Tensors, with shape (batch_size, output_dim)
-                        # batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
-                        #     model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
-                        #                                                       dst_node_ids=batch_neg_dst_node_ids,
-                        #                                                       node_interact_times=batch_node_interact_times)
-                    else:
-                        raise ValueError(f"Wrong value for model_name {args.model_name}!")
-                    # get positive and negative probabilities, shape (batch_size, )
-                    # positive_probabilities = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings).squeeze(dim=-1).sigmoid()
-                    # negative_probabilities = model[1](input_1=batch_neg_src_node_embeddings, input_2=batch_neg_dst_node_embeddings).squeeze(dim=-1).sigmoid()
+                        # Compute the L1 loss (MAE) between the predicted edge feature and the ground truth edge feature.
+                        loss = torch.nn.functional.l1_loss(predicted_edge_feature, torch.tensor(edge_raw_features[train_data_indices], dtype=torch.float32, device = args.device))
+                        
+                        # Append losses to the storage arrays
+                        train_losses.append(loss.item())
+                        train_metrics.append({'Training MAE loss': loss.item()})
 
-                    # predicts = torch.cat([positive_probabilities, negative_probabilities], dim=0)
-                    # labels = torch.cat([torch.ones_like(positive_probabilities), torch.zeros_like(negative_probabilities)], dim=0)
+                        # Logging training loss for the specified training window
+                        print (f"TRAINING LOSS FOR PATCH {patch_id + 1:04d}, RUN {run + 1}, EPOCH {epoch + 1}, TRAINING WINDOW {train_window_idx[0] + 1}: {loss.item()}\n")
+                        logger.info (f"TRAINING LOSS FOR PATCH {patch_id + 1:04d}, RUN {run + 1}, EPOCH {epoch + 1}, TRAINING WINDOW {train_window_idx[0] + 1}: {loss.item()}\n")
 
-                    # loss = loss_func(input=predicts, target=labels)
-                    
-                    # Get the predicted edge feature (without applying sigmoid, as we're doing regression)
-                    predicted_edge_feature = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings)
-                    print(f"predicted_edge_feature.shape: {predicted_edge_feature.shape}\n")
-                    # print("edge_raw_features[train_data_indices]", edge_raw_features[train_data_indices].shape)
+                        optimizer.zero_grad()   # Set the gradients of parameters to zero before backpropagation
+                        loss.backward()         # Backpropagation
+                        optimizer.step()        # Update model weights (W) and biases (b)
+                        sys.stdout.flush()
 
-                    # Compute the L1 loss (MAE) between the predicted edge feature and the ground truth edge feature.
-                    loss = torch.nn.functional.l1_loss(predicted_edge_feature, torch.tensor(edge_raw_features[train_data_indices], dtype=torch.float32, device = args.device))
-                    
-                    # Append losses to the storage arrays
-                    train_losses.append(loss.item())
-                    train_metrics.append({'Training MAE loss': loss.item()})
+                        # train_data_unique_dst_node_ids_tqdm.set_description(f'Epoch: {epoch + 1}, train for the {train_window_idx[0] + 1}-th batch, train loss: {loss.item()}')
 
-                    # Logging training loss for the specified training window
-                    print (f"TRAINING LOSS FOR PATCH {patch_id + 1:04d}, RUN {run + 1}, EPOCH {epoch + 1}, TRAINING WINDOW {train_window_idx[0] + 1}: {loss.item()}\n")
-                    logger.info (f"TRAINING LOSS FOR PATCH {patch_id + 1:04d}, RUN {run + 1}, EPOCH {epoch + 1}, TRAINING WINDOW {train_window_idx[0] + 1}: {loss.item()}\n")
+                        if args.model_name in ['JODIE', 'DyRep', 'TGN']:
+                            # detach the memories and raw messages of nodes in the memory bank after each batch, so we don't back propagate to the start of time
+                            model[0].memory_bank.detach_memory_bank()
 
-                    optimizer.zero_grad()   # Set the gradients of parameters to zero before backpropagation
-                    loss.backward()         # Backpropagation
-                    optimizer.step()        # Update model weights (W) and biases (b)
-                    sys.stdout.flush()
+                        # Break out of the training loop when the last destination node of the training dataset is reached.
+                        if train_window_dst_node_end < train_data_dst_node_end:
+                            print(f"Moving on to the next training window...\n")
+                        elif train_window_dst_node_end == train_data_dst_node_end:
+                            print(f"TRAINING involving {len(train_data.edge_ids)} edges across {train_window_idx[0] + 1} temporal windows has ended. Proceeding to VALIDATION involving {len(val_data.edge_ids)} edges...\n")
+                            logger.info(f"TRAINING involving {len(train_data.edge_ids)} edges across {train_window_idx[0] + 1} temporal windows has ended. Proceeding to VALIDATION involving {len(val_data.edge_ids)} edges...\n")
+                            break
 
-                    # train_data_unique_dst_node_ids_tqdm.set_description(f'Epoch: {epoch + 1}, train for the {train_window_idx[0] + 1}-th batch, train loss: {loss.item()}')
+                    # If the training window does not meet the 2 criteria for training, skip training for this window and move on to the next window
+                    elif (train_window_num_total_edges < args.min_num_total_edges_valid_training_window) or \
+                        (train_window_num_new_edges < args.min_num_new_edges_valid_training_window):
 
-                    if args.model_name in ['JODIE', 'DyRep', 'TGN']:
-                        # detach the memories and raw messages of nodes in the memory bank after each batch, so we don't back propagate to the start of time
-                        model[0].memory_bank.detach_memory_bank()
+                        logger.warning(f"WARNING: Skipping training for WINDOW {train_window_idx[0] + 1} as there are too few total and/or new edges. | Total Edges: {train_window_num_total_edges} ({train_window_num_new_edges} new)")
+                        logger.warning(f"WARNING: Moving on to the next training window...\n")
+                        print(f"WARNING: Skipping training for WINDOW {train_window_idx[0] + 1} as there are too few total and/or new edges. | Total Edges: {train_window_num_total_edges} ({train_window_num_new_edges} new)")
+                        print(f"WARNING: Moving on to the next training window...\n")
 
-                    # Break out of the training loop when the last destination node of the training dataset is reached.
-                    if train_window_dst_node_end < train_data_dst_node_end:
-                        print(f"Moving on to the next training window...\n")
-                    elif train_window_dst_node_end == train_data_dst_node_end:
-                        print(f"TRAINING involving {len(train_data.edge_ids)} edges across {train_window_idx[0] + 1} temporal windows has ended. Proceeding to VALIDATION involving {len(val_data.edge_ids)} edges...\n")
-                        logger.info(f"TRAINING involving {len(train_data.edge_ids)} edges across {train_window_idx[0] + 1} temporal windows has ended. Proceeding to VALIDATION involving {len(val_data.edge_ids)} edges...\n")
-                        break
-                    
+                        continue    # Proceed to next training window
+                
+                ########## VALIDATION ##########
+
                 val_metrics = evaluate_image_link_prediction_without_dataloader(model_name=args.model_name,
                                                                                 model=model,
                                                                                 neighbor_sampler=full_neighbor_sampler,
@@ -491,9 +525,10 @@ if __name__ == "__main__":
             # load the best model
             early_stopping.load_checkpoint(model)
 
-            # TESTING
+            ######### TESTING #########
+
             print (f"VALIDATION involving {len(val_data.edge_ids)} edges has ended. Proceeding to TESTING involving {len(test_data.edge_ids)} edges...\n")
-            logger.info(f'\nVALIDATION involving {len(val_data.edge_ids)} edges has ended. Proceeding to TESTING involving {len(test_data.edge_ids)} edges...\n')
+            logger.info(f'VALIDATION involving {len(val_data.edge_ids)} edges has ended. Proceeding to TESTING involving {len(test_data.edge_ids)} edges...\n')
 
             # evaluate the best model
             logger.info(f'Get final performance on dataset: {args.dataset_name}...')
@@ -521,7 +556,6 @@ if __name__ == "__main__":
             #                                             edge_raw_features = edge_raw_features,
             #                                             num_neighbors=args.num_neighbors,
             #                                             time_gap=args.time_gap)
-
 
             # exit(0)
             # store the evaluation metrics at the current run
