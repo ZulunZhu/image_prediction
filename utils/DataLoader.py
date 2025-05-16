@@ -275,7 +275,7 @@ def get_link_prediction_image_data(dataset_name: str):
     return node_raw_features, edge_raw_features, full_data, train_data, val_data, test_data, eval_neg_edge_sampler, eval_metric_name
 
 
-def get_link_prediction_image_data_split_by_nodes(dataset_name: str):
+def get_link_prediction_image_data_split_by_nodes(logger, dataset_name: str):
     """
     Generate data for link prediction task using pre-generated image data.
     Loads node features, edge features, and edge node pairs from the "image_data" folder.
@@ -288,6 +288,7 @@ def get_link_prediction_image_data_split_by_nodes(dataset_name: str):
              eval_neg_edge_sampler, eval_metric_name
     """
     # Load pre-generated data from the "image_data" folder in the current directory.
+    logger.info(f"\n\n\nSplitting data into train, validate, and test sets...\n\n")
     dataset_name = 'image_data'
     save_dir = os.path.join(os.getcwd(), "image_data")
     node_raw_features = np.load(os.path.join(save_dir, "node_features.npy"))  # shape: (num_nodes, feat_dim)
@@ -375,32 +376,32 @@ def get_link_prediction_image_data_split_by_nodes(dataset_name: str):
                      node_interact_times=node_interact_times[test_mask], edge_ids=edge_ids[test_mask],
                      labels=labels[test_mask])
 
-    print("The dataset has {} interactions, involving {} different nodes".format(
+    logger.info("The dataset has {} interactions, involving {} different nodes".format(
           full_data.num_interactions, full_data.num_unique_nodes))
-    print("The training dataset has {} interactions, involving {} different nodes".format(
+    logger.info("The training dataset has {} interactions, involving {} different nodes".format(
           train_data.num_interactions, train_data.num_unique_nodes))
-    print("The validation dataset has {} interactions, involving {} different nodes".format(
+    logger.info("The validation dataset has {} interactions, involving {} different nodes".format(
           val_data.num_interactions, val_data.num_unique_nodes))
-    print("The test dataset has {} interactions, involving {} different nodes".format(
+    logger.info("The test dataset has {} interactions, involving {} different nodes".format(
           test_data.num_interactions, test_data.num_unique_nodes))
     
     # ---- Feature Dimension Checks and Printing ----
     # Check that the node feature matrix is 2D and that every row has the same dimension.
     if node_raw_features.ndim != 2:
-        print("Error: Node features should be a 2D array!")
+        logger.info(f"Error: Node features should be a 2D array!")
     else:
         node_dim = node_raw_features.shape[1]
         # In a well-formed numpy 2D array, every row has the same dimension.
-        print("Node feature matrix shape:", node_raw_features.shape)
-        print("All node feature rows have consistent dimension:", node_dim)
+        logger.info(f"Dimension of node_raw_features: {node_raw_features.shape}")
+        logger.info(f"All node feature rows have consistent dimension: {node_dim}")
 
     # Check the edge feature matrix similarly.
     if edge_raw_features.ndim != 2:
-        print("Error: Edge features should be a 2D array!")
+        logger.info(f"Error: Edge features should be a 2D array!")
     else:
         edge_dim = edge_raw_features.shape[1]
-        print("Edge feature matrix shape:", edge_raw_features.shape)
-        print("All edge feature rows have consistent dimension:", edge_dim)
+        logger.info(f"Dimension of edge_raw_features: {edge_raw_features.shape}")
+        logger.info(f"All edge feature rows have consistent dimension: {edge_dim}")
     # --------------------------------------------------
     
     return node_raw_features, edge_raw_features, full_data, train_data, val_data, test_data, eval_neg_edge_sampler, eval_metric_name

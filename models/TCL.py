@@ -125,9 +125,11 @@ class TCL(nn.Module):
         dst_nodes_neighbor_time_features = self.projection_layer['time'](dst_nodes_neighbor_time_features)
 
         # Tensor, shape (batch_size, num_neighbors + 1, output_dim)
-        src_node_features = src_nodes_neighbor_node_raw_features + src_nodes_edge_raw_features + src_nodes_neighbor_time_features + src_nodes_neighbor_depth_features
+        # src_node_features = src_nodes_neighbor_node_raw_features + src_nodes_edge_raw_features + src_nodes_neighbor_time_features + src_nodes_neighbor_depth_features
+        src_node_features = src_nodes_edge_raw_features + src_nodes_neighbor_time_features + src_nodes_neighbor_depth_features
         # Tensor, shape (batch_size, num_neighbors + 1, output_dim)
-        dst_node_features = dst_nodes_neighbor_node_raw_features + dst_nodes_edge_raw_features + dst_nodes_neighbor_time_features + dst_nodes_neighbor_depth_features
+        # dst_node_features = dst_nodes_neighbor_node_raw_features + dst_nodes_edge_raw_features + dst_nodes_neighbor_time_features + dst_nodes_neighbor_depth_features
+        dst_node_features = dst_nodes_edge_raw_features + dst_nodes_neighbor_time_features + dst_nodes_neighbor_depth_features
 
         for transformer in self.transformers:
             # self-attention block

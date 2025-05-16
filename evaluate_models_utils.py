@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch.utils.data import DataLoader
 from tqdm import tqdm
 import numpy as np
+import pandas as pd
 import logging
 import time
 import argparse
@@ -23,7 +24,8 @@ from utils.utils import NeighborSampler
 from utils.DataLoader import Data
 
 
-def evaluate_image_link_prediction_without_dataloader(model_name: str, 
+def evaluate_image_link_prediction_without_dataloader(logger: str,
+                                                    model_name: str, 
                                                     model: nn.Module, 
                                                     neighbor_sampler: NeighborSampler, 
                                                     edge_ids_array: np.ndarray,
@@ -32,8 +34,11 @@ def evaluate_image_link_prediction_without_dataloader(model_name: str,
                                                     eval_metric_name: str, 
                                                     evaluator: LinkPredictionEvaluator, 
                                                     edge_raw_features: np.ndarray, 
+                                                    edge_node_pairs: list,
+                                                    node_mapping: pd.DataFrame,
                                                     num_neighbors: int = 20, 
-                                                    time_gap: int = 2000):
+                                                    time_gap: int = 2000,
+                                                    visualize: bool = False):
     """
     Evaluate models on the link prediction task without requiring a data loader
     Processing all edges in a single batch
@@ -58,15 +63,12 @@ def evaluate_image_link_prediction_without_dataloader(model_name: str,
     model.eval()
     
     evaluate_metrics = []
-    
-    logger = logging.getLogger("Main_Logger")
 
     with torch.no_grad():
 
         # Process all edges at once for VALIDATION and TEST stages
         # print(f"Processing all {len(edge_ids_array)} edges at once for the '{eval_stage}' stage...")
         logger.info(f"Edges used for the '{eval_stage}' stage ({len(edge_ids_array)} edges): \n{edge_ids_array}\n")
-        print(f"Edges used for the '{eval_stage}' stage ({len(edge_ids_array)} edges): \n{edge_ids_array}\n")
         
         # Convert edge IDs to zero-based indices e.g. [ 0  1  2  3  4  5  ...]
         # Used for subsetting the "master dataset" used for VALIDATION and TEST stages
@@ -75,10 +77,6 @@ def evaluate_image_link_prediction_without_dataloader(model_name: str,
         logger.info(f"edge_ids_array for the '{eval_stage}' stage: \n{edge_ids_array}\n")
         logger.info(f"Element from edge_ids_array[0] for the '{eval_stage}' stage: {edge_ids_array[0]}\n")
         logger.info(f"evaluate_data_indices (indexing starts from zero) for the '{eval_stage}' stage:\n {evaluate_data_indices}\n") 
-
-        print(f"edge_ids_array for the '{eval_stage}' stage: \n{edge_ids_array}\n")
-        print(f"Element from edge_ids_array[0] for the '{eval_stage}' stage: {edge_ids_array[0]}\n")
-        print(f"evaluate_data_indices (indexing starts from zero) for the '{eval_stage}' stage:\n {evaluate_data_indices}\n")
 
         # Extract data for all edges
         batch_src_node_ids = evaluate_data.src_node_ids[evaluate_data_indices]
@@ -90,11 +88,6 @@ def evaluate_image_link_prediction_without_dataloader(model_name: str,
         logger.info(f"batch_dst_node_ids for the '{eval_stage}' stage: \n{batch_dst_node_ids}\n")
         logger.info(f"batch_node_interact_times for the '{eval_stage}' stage: \n{batch_node_interact_times}\n")
         logger.info(f"batch_edge_ids for the '{eval_stage}' stage: \n{batch_edge_ids}\n")
-
-        print(f"batch_src_node_ids for the '{eval_stage}' stage: \n{batch_src_node_ids}\n")
-        print(f"batch_dst_node_ids for the '{eval_stage}' stage: \n{batch_dst_node_ids}\n")
-        print(f"batch_node_interact_times for the '{eval_stage}' stage: \n{batch_node_interact_times}\n")
-        print(f"batch_edge_ids for the '{eval_stage}' stage: \n{batch_edge_ids}\n")
 
         # Compute node embeddings based on model type
         if model_name in ['TGAT', 'CAWN', 'TCL']:
@@ -131,120 +124,103 @@ def evaluate_image_link_prediction_without_dataloader(model_name: str,
             raise ValueError(f"Wrong value for model_name {model_name}!")
 
         # Compute positive probabilities
-        positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).sigmoid().cpu().numpy()
+        # sigmoid() skews the distribution while keeping values within 0 to 1
+        # clamp() keeps values within 0 to 1 without changing the distribution of values between 0 and 1 
+        # positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).sigmoid().cpu().numpy()
+        positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).clamp(min=0.0, max=1.0).cpu().numpy()  
         
-        print(f"Ground Truth (Dimensions: {edge_raw_features[edge_ids_array].shape}): \n{edge_raw_features[edge_ids_array]}\n")
-        print(f"Prediction (Dimensions: {positive_probabilities.shape}): \n{positive_probabilities}\n")
+        logger.info(f"Ground Truth (Dimensions: {edge_raw_features[edge_ids_array].shape}): \n{edge_raw_features[edge_ids_array]}\n")
+        logger.info(f"Prediction (Dimensions: {positive_probabilities.shape}): \n{positive_probabilities}\n")
 
         # Compute loss (using MAE / L1 loss here)
         loss = np.mean(np.abs(positive_probabilities - edge_raw_features[edge_ids_array]))
         evaluate_metrics.append({f'{eval_stage} MAE loss': loss})
-        
-        # For test_end stage, generate visualization
-        if eval_stage == "test_end":
+
+        # For test_end stage or if visualise is set to true, visualize results 
+        if eval_stage == "test_end" or visualize:
             # Create the output folder if it doesn't exist
             result_folder = os.path.join(os.getcwd(), "image_result")
-            if not os.path.exists(result_folder):
-                os.makedirs(result_folder)
+            os.makedirs(result_folder, exist_ok=True)
 
             # Process prediction results
-            pred_embeddings = positive_probabilities
             gt_embeddings = edge_raw_features[edge_ids_array]
-
-            n, L = pred_embeddings.shape
+            pred_embeddings = positive_probabilities
+            
             # Compute an approximate 2D shape for each flattened embedding
+            n, L = pred_embeddings.shape
             H = int(np.floor(np.sqrt(L)))
             W = int(np.ceil(L / H))
 
-            print(f"pred_embeddings: (Dimensions: {pred_embeddings.shape})\n {pred_embeddings}\n")
-            print(f"gt_embeddings: (Dimensions: {gt_embeddings.shape})\n {gt_embeddings}\n")
-            print(f"Shape of embeddings: Height (H): {H}, Width (W): {W}\n")
+            logger.info(f"gt_embeddings: (Dimensions: {gt_embeddings.shape})\n {gt_embeddings}\n")
+            logger.info(f"pred_embeddings: (Dimensions: {pred_embeddings.shape})\n {pred_embeddings}\n")
+            logger.info(f"Shape of embeddings: Height (H): {H}, Width (W): {W}\n")
 
-            def reshape_to_2d(flat_sample, H, W):
-                """
-                Pads the flattened sample if needed, reshapes it into a 2D array.
-                """
-                total_pixels = H * W
-                pad_size = total_pixels - flat_sample.shape[0]
-                if pad_size > 0:
-                    flat_sample = np.pad(flat_sample, (0, pad_size), mode='constant', constant_values=0)
-                return flat_sample.reshape(H, W)
-
-            def highlight_differences(pred_img, gt_img, threshold=0.1):
-                """
-                Highlights pixels in pred_img that differ from gt_img by more than 'threshold'
-                in red. Returns an RGB array.
-                """
-                # Uncomment this line for the original code where differenced image is coerced to np.int16
-                # diff = np.abs(pred_img.astype(np.int16) - gt_img.astype(np.int16))
-                diff = np.abs(pred_img - gt_img)
-                
-                # Convert the predicted image to RGB
-                rgb = np.stack([pred_img, pred_img, pred_img], axis=-1)
-                mask = diff > threshold
-                rgb[mask] = np.array([255, 0, 0], dtype=np.uint8)
-                return rgb
-            
             # Process each image
             for i in range(n):
+                # Get dates from node and edge mappings
+                edge_id = edge_ids_array[i]
+                src_node_id, dst_node_id = edge_node_pairs[edge_id-1]
+                src_date = node_mapping.loc[node_mapping['nodeID'] == src_node_id, 'date'].values[0]
+                dst_date = node_mapping.loc[node_mapping['nodeID'] == dst_node_id, 'date'].values[0]
+                src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
+                dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
+                save_name = os.path.join(result_folder, f"{eval_stage}_src-{src_node_id}_dst-{dst_node_id}_edge-{edge_ids_array[i]}_{src_date_str}-{dst_date_str}") 
+                
                 # Reshape ground truth and prediction into 2D
                 gt_2d = reshape_to_2d(gt_embeddings[i], H, W)
                 pred_2d = reshape_to_2d(pred_embeddings[i], H, W)
 
-                ####### HISTOGRAM MATCHING (NOT RECOMMENDED!) #######
-                # # If Histogram Matching ON: 
-                # # - Ensure that the results are consistent with gt_norm & pred_norm.
-                # # - Ensure that the scale is [0, 255].
-                # 
-                # # If Histogram Matching OFF: 
-                # # - Ensure that the results are consistent with gt_2d & pred_2d.
-                # # - Ensure that the scale is [0, 1].
-
-                # # Convert to float64 for histogram matching
-                # gt_2d_float = gt_2d.astype(np.float64)
-                # pred_2d_float = pred_2d.astype(np.float64) 
-
-                # # Match histogram of prediction to ground truth
-                # pred_matched = match_histograms(pred_2d_float, gt_2d_float)    
-
-                # # Normalize both images to [0, 255] for display
-                # combined_min = min(gt_2d_float.min(), pred_matched.min())
-                # combined_max = max(gt_2d_float.max(), pred_matched.max())
-                # combined_range = combined_max - combined_min + 1e-8
-
-                # gt_norm = ((gt_2d_float - combined_min) / combined_range * 255).astype(np.uint8)
-                # pred_norm = ((pred_matched - combined_min) / combined_range * 255).astype(np.uint8)
-
                 # Save results
-                np.save(os.path.join(result_folder, f"gt_{i:02d}.npy"), gt_2d)
-                np.save(os.path.join(result_folder, f"pred_{i:02d}.npy"), pred_2d)
-
-                # Compute difference image
-                diff_img = highlight_differences(pred_2d, gt_2d, threshold=0.1)
-
-                # Create visualization
-                fig, axs = plt.subplots(1, 3, figsize=(12, 4))
-                axs[0].imshow(gt_2d, cmap='gray', vmin=0, vmax=1)
-                axs[0].set_title("Ground Truth")
-                axs[0].axis('off')
-
-                axs[1].imshow(pred_2d, cmap='gray', vmin=0, vmax=1)
-                axs[1].set_title("Predicted")
-                axs[1].axis('off')
-
-                axs[2].imshow(diff_img)
-                axs[2].set_title(f"Differences (Red)")
-                axs[2].axis('off')
-
-                plt.tight_layout()
-
-                # Save the figure
-                save_path = os.path.join(result_folder, f"comparison_{i:02d}.png")
-                plt.savefig(save_path)
-                plt.close(fig)
-                print(f"Saved prediction results for sample {i} to {save_path}")
+                np.save(save_name + "_gt.npy", gt_2d)
+                np.save(save_name + "_pred.npy", pred_2d)
+                
+                # Visualize results
+                evaluate_image_link_prediction_visualiser(logger, gt_2d, pred_2d, save_name + ".png")              
 
     return evaluate_metrics
+
+
+def evaluate_image_link_prediction_visualiser(logger,gt_img,pred_img,save_path):
+    
+    def highlight_differences(pred_img, gt_img, threshold=0.1):
+        """
+        Highlights pixels in pred_img that differ from gt_img by more than 'threshold'
+        in red. Returns an RGB array.
+        """
+        # Uncomment this line for the original code where differenced image is coerced to np.int16
+        # diff = np.abs(pred_img.astype(np.int16) - gt_img.astype(np.int16))
+        diff = np.abs(pred_img - gt_img)
+        
+        # Convert the predicted image to RGB
+        rgb = np.stack([pred_img, pred_img, pred_img], axis=-1)
+        mask = diff > threshold
+        rgb[mask] = np.array([255, 0, 0], dtype=np.uint8)
+        return rgb
+            
+    # Print result statistics                
+    logger.info(f"\n"
+                f"Statistics for {save_path}\n"
+                f"[min | 1st | 25th | 50th | 75th | 99th | max]\n"
+                f"Ground truth percentiles: \n"
+                f"{np.percentile(gt_img, [0, 1, 25, 50, 75, 99, 100])}\n\n"
+                f"Prediction percentiles: \n"
+                f"{np.percentile(pred_img, [0, 1, 25, 50, 75, 99, 100])}\n\n")
+    
+    # Compute difference image
+    # diff_img = highlight_differences(pred_img, gt_img, threshold=0.1)
+    
+    # Visualize results
+    fig, axs = plt.subplots(1, 3, figsize=(12, 4))
+    im0 = axs[0].imshow(gt_img, cmap='gray', vmin=0, vmax=1)
+    axs[0].set_title("Ground Truth"); fig.colorbar(im0, ax=axs[0])
+    im1 = axs[1].imshow(pred_img, cmap='gray', vmin=0, vmax=1)
+    axs[1].set_title("Predicted"); fig.colorbar(im1, ax=axs[1])
+    im2 = axs[2].imshow(pred_img - gt_img, cmap='gray', vmin=-1, vmax=1)
+    axs[2].set_title(f"Difference (Pred-GT)"); fig.colorbar(im2, ax=axs[2])
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close(fig)
+    logger.info(f"Saved prediction results to {save_path}")
 
 
 def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_sampler: NeighborSampler, evaluate_idx_data_loader: DataLoader, evaluate_data: Data, eval_stage: str,
@@ -352,8 +328,7 @@ def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_s
             if eval_stage == "test_end":
                 # Create the output folder if it doesn't exist.
                 result_folder = os.path.join(os.getcwd(), "image_result")
-                if not os.path.exists(result_folder):
-                    os.makedirs(result_folder)
+                os.makedirs(result_folder, exist_ok=True)
 
                 # Assume:
                 #   positive_probabilities: tensor of shape [n, L] (predicted embedding)
@@ -1161,3 +1136,14 @@ def evaluate_parameter_free_node_classification(args: argparse.Namespace, train_
         logger.info(f'test {metric_name}, {[test_metric_single_run[metric_name] for test_metric_single_run in test_metric_all_runs]}')
         logger.info(f'average test {metric_name}, {np.mean([test_metric_single_run[metric_name] for test_metric_single_run in test_metric_all_runs]):.4f} '
                     f'± {np.std([test_metric_single_run[metric_name] for test_metric_single_run in test_metric_all_runs], ddof=1):.4f}')
+
+
+def reshape_to_2d(flat_sample, H, W):
+    """
+    Pads the flattened sample if needed, reshapes it into a 2D array.
+    """
+    total_pixels = H * W
+    pad_size = total_pixels - flat_sample.shape[0]
+    if pad_size > 0:
+        flat_sample = np.pad(flat_sample, (0, pad_size), mode='constant', constant_values=0)
+    return flat_sample.reshape(H, W)
