@@ -174,7 +174,7 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                 # Save results
                 np.save(save_name + "_gt.npy", gt_2d)
                 np.save(save_name + "_pred.npy", pred_2d)
-                # np.save(save_name + "_residual.npy", residual_2d)
+                np.save(save_name + "_residual.npy", residual_2d)
                 # np.save(save_name + "_residualabs.npy", np.abs(residual_2d))
                 
                 # Visualize results
