@@ -33,6 +33,7 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                                                     eval_stage: str,
                                                     eval_metric_name: str, 
                                                     evaluator: LinkPredictionEvaluator, 
+                                                    evaluate_metrics: list,
                                                     edge_raw_features: np.ndarray, 
                                                     edge_node_pairs: list,
                                                     node_mapping: pd.DataFrame,
@@ -61,8 +62,6 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
         model[0].set_neighbor_sampler(neighbor_sampler)
 
     model.eval()
-    
-    evaluate_metrics = []
 
     with torch.no_grad():
 
@@ -126,6 +125,7 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
         # Compute positive probabilities
         # sigmoid() skews the distribution while keeping values within 0 to 1
         # clamp() keeps values within 0 to 1 without changing the distribution of values between 0 and 1 
+        # Using clamp() for now to mitigate out of bounds coherence values, need to double check ReLu in link predictor to penalize negative values
         # positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).sigmoid().cpu().numpy()
         positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).clamp(min=0.0, max=1.0).cpu().numpy()  
         
@@ -169,10 +169,13 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                 # Reshape ground truth and prediction into 2D
                 gt_2d = reshape_to_2d(gt_embeddings[i], H, W)
                 pred_2d = reshape_to_2d(pred_embeddings[i], H, W)
+                residual_2d = gt_2d - pred_2d
 
                 # Save results
                 np.save(save_name + "_gt.npy", gt_2d)
                 np.save(save_name + "_pred.npy", pred_2d)
+                # np.save(save_name + "_residual.npy", residual_2d)
+                # np.save(save_name + "_residualabs.npy", np.abs(residual_2d))
                 
                 # Visualize results
                 evaluate_image_link_prediction_visualiser(logger, gt_2d, pred_2d, save_name + ".png")              
@@ -189,7 +192,7 @@ def evaluate_image_link_prediction_visualiser(logger,gt_img,pred_img,save_path):
         """
         # Uncomment this line for the original code where differenced image is coerced to np.int16
         # diff = np.abs(pred_img.astype(np.int16) - gt_img.astype(np.int16))
-        diff = np.abs(pred_img - gt_img)
+        diff = np.abs(gt_img - pred_img)
         
         # Convert the predicted image to RGB
         rgb = np.stack([pred_img, pred_img, pred_img], axis=-1)
@@ -202,9 +205,13 @@ def evaluate_image_link_prediction_visualiser(logger,gt_img,pred_img,save_path):
                 f"Statistics for {save_path}\n"
                 f"[min | 1st | 25th | 50th | 75th | 99th | max]\n"
                 f"Ground truth percentiles: \n"
-                f"{np.percentile(gt_img, [0, 1, 25, 50, 75, 99, 100])}\n\n"
+                f"{np.percentile(gt_img, [0, 1, 25, 50, 75, 99, 100])}\n"
                 f"Prediction percentiles: \n"
-                f"{np.percentile(pred_img, [0, 1, 25, 50, 75, 99, 100])}\n\n")
+                f"{np.percentile(pred_img, [0, 1, 25, 50, 75, 99, 100])}\n"
+                f"Ground truth - prediction percentiles: \n"
+                f"{np.percentile(gt_img - pred_img, [0, 1, 25, 50, 75, 99, 100])}\n"
+                f"abs(ground truth - prediction) percentiles: \n"
+                f"{np.percentile(np.abs(gt_img - pred_img), [0, 1, 25, 50, 75, 99, 100])}\n")
     
     # Compute difference image
     # diff_img = highlight_differences(pred_img, gt_img, threshold=0.1)
@@ -215,12 +222,12 @@ def evaluate_image_link_prediction_visualiser(logger,gt_img,pred_img,save_path):
     axs[0].set_title("Ground Truth"); fig.colorbar(im0, ax=axs[0])
     im1 = axs[1].imshow(pred_img, cmap='gray', vmin=0, vmax=1)
     axs[1].set_title("Predicted"); fig.colorbar(im1, ax=axs[1])
-    im2 = axs[2].imshow(pred_img - gt_img, cmap='gray', vmin=-1, vmax=1)
-    axs[2].set_title(f"Difference (Pred-GT)"); fig.colorbar(im2, ax=axs[2])
+    im2 = axs[2].imshow(gt_img - pred_img, cmap='gray', vmin=-1, vmax=1)
+    axs[2].set_title(f"Difference (GT-Pred)"); fig.colorbar(im2, ax=axs[2])
     plt.tight_layout()
     plt.savefig(save_path)
     plt.close(fig)
-    logger.info(f"Saved prediction results to {save_path}")
+    logger.info(f"Saved prediction results to {save_path}\n")
 
 
 def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_sampler: NeighborSampler, evaluate_idx_data_loader: DataLoader, evaluate_data: Data, eval_stage: str,

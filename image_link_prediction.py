@@ -226,11 +226,14 @@ if __name__ == "__main__":
             shutil.rmtree(save_model_folder, ignore_errors=True)
             os.makedirs(save_model_folder, exist_ok=True)
 
-            early_stopping = EarlyStopping(patience=args.patience, save_model_folder=save_model_folder,
+            early_stopping = EarlyStopping(patience=args.patience, patience_threshold=args.patience_threshold, save_model_folder=save_model_folder,
                                         save_model_name=args.save_model_name, logger=log_patch, model_name=args.model_name)
 
             loss_func = nn.BCELoss()    # BCE loss is not used as of the moment. Using L1 loss (MAE) instead.  
             evaluator = Evaluator(name=args.dataset_name)
+            
+            # Storage arrays for validation metrics
+            val_metrics, test_metrics = [], []
 
             ######### EPOCH LOOP #########
             for epoch in range(args.num_epochs):
@@ -415,6 +418,8 @@ if __name__ == "__main__":
                         # Note that edge_raw_features shape is [total no. of edges in full dataset +1, no. of pixels in patch], 
                         # where +1 refers to the first row padded with zeros, so all data in edge_raw_features[0,] should be ignored,
                         # so we +1 to train_data_indices below
+                        # Using clamp() for now to mitigate out of bounds coherence values, need to double check ReLu in link predictor to penalize negative values
+                        predicted_edge_feature = predicted_edge_feature.clamp(min=0.0, max=1.0)
                         loss = torch.nn.functional.l1_loss(predicted_edge_feature, torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device))
                         
                         # Uncomment to visualize train results for debugging
@@ -490,6 +495,7 @@ if __name__ == "__main__":
                 
                 log_patch.info(f"********** PATCH {patch_id + 1:04d} | RUN {run + 1} | EPOCH {epoch + 1} | VALIDATION **********")
                 if epoch == 9:
+                    # Uncomment to visualize train results for debugging
                     val_metrics = evaluate_image_link_prediction_without_dataloader(logger=log_patch,
                                                                                 model_name=args.model_name,
                                                                                 model=model,
@@ -499,6 +505,7 @@ if __name__ == "__main__":
                                                                                 eval_stage='val',
                                                                                 eval_metric_name=eval_metric_name,
                                                                                 evaluator=evaluator,
+                                                                                evaluate_metrics=val_metrics,
                                                                                 edge_raw_features = edge_raw_features,
                                                                                 edge_node_pairs=edge_node_pairs,
                                                                                 node_mapping=node_mapping,
@@ -506,6 +513,7 @@ if __name__ == "__main__":
                                                                                 time_gap=args.time_gap,
                                                                                 visualize=True)
                 else:
+                    # Validate as per normal without visualizing
                     val_metrics = evaluate_image_link_prediction_without_dataloader(logger=log_patch,
                                                                                 model_name=args.model_name,
                                                                                 model=model,
@@ -515,6 +523,7 @@ if __name__ == "__main__":
                                                                                 eval_stage='val',
                                                                                 eval_metric_name=eval_metric_name,
                                                                                 evaluator=evaluator,
+                                                                                evaluate_metrics=val_metrics,
                                                                                 edge_raw_features = edge_raw_features,
                                                                                 edge_node_pairs=edge_node_pairs,
                                                                                 node_mapping=node_mapping,
@@ -527,45 +536,24 @@ if __name__ == "__main__":
                     val_backup_memory_bank = model[0].memory_bank.backup_memory_bank()
                 
                 # Logging validation loss for the specified epoch
-                log_patch.info(f"VALIDATION LOSS FOR PATCH {patch_id + 1:04d}, RUN {run + 1}, EPOCH {epoch + 1}: {val_metrics}\n\n")
+                log_patch.info(f"VALIDATION LOSS FOR PATCH {patch_id + 1:04d}, RUN {run + 1}, EPOCH {epoch + 1}: {val_metrics[-1]['val MAE loss']}\n\n")
                 
                 # Logging average training and validation losses
                 log_patch.info(f'Number of epochs: {epoch + 1}, learning rate: {optimizer.param_groups[0]["lr"]}, mean train loss: {np.mean(train_losses):.4f}')
                 for metric_name in train_metrics[0].keys():
-                    log_patch.info(f'train {metric_name}, {np.mean([train_metric[metric_name] for train_metric in train_metrics]):.4f}')
+                    log_patch.info(f'train mean {metric_name}, {np.mean([train_metric[metric_name] for train_metric in train_metrics]):.4f}')
                 for metric_name in val_metrics[0].keys():
-                    log_patch.info(f'validate {metric_name}, {np.mean([val_metric[metric_name] for val_metric in val_metrics]):.4f}')
-                import pdb; pdb.set_trace()
+                    log_patch.info(f'validate mean {metric_name}, {np.mean([val_metric[metric_name] for val_metric in val_metrics]):.4f}')
 
-                # # perform testing once after test_interval_epochs
-                # if (epoch + 1) % args.test_interval_epochs == 0:
-                #     test_metrics = evaluate_image_link_prediction(model_name=args.model_name,
-                #                                                 model=model,
-                #                                                 neighbor_sampler=full_neighbor_sampler,
-                #                                                 evaluate_idx_data_loader=test_idx_data_loader,
-                #                                                 evaluate_data=test_data,
-                #                                                 eval_stage='test',
-                #                                                 eval_metric_name=eval_metric_name,
-                #                                                 evaluator=evaluator,
-                #                                                 edge_raw_features = edge_raw_features,
-                #                                                 num_neighbors=args.num_neighbors,
-                #                                                 time_gap=args.time_gap)
-
-                #     if args.model_name in ['JODIE', 'DyRep', 'TGN']:
-                #         # reload validation memory bank for testing nodes or saving models
-                #         # note that since model treats memory as parameters, we need to reload the memory to val_backup_memory_bank for saving models
-                #         model[0].memory_bank.reload_memory_bank(val_backup_memory_bank)
-
-                #     for metric_name in test_metrics[0].keys():
-                #         logger.info(f'test {metric_name}, {np.mean([test_metric[metric_name] for test_metric in test_metrics]):.4f}')
-
-                # Select the best model based on all the validate metrics
+                # Select the best model based on all types of validate metrics
+                # For L1 MAE loss, lower is better, so use 'False' in val_metric_indicator for early stopping
                 val_metric_indicator = []
                 for metric_name in val_metrics[0].keys():
-                    val_metric_indicator.append((metric_name, np.mean([val_metric[metric_name] for val_metric in val_metrics]), True))
+                    val_metric_indicator.append((metric_name, np.mean([val_metric[metric_name] for val_metric in val_metrics]), False))
                 early_stop = early_stopping.step(val_metric_indicator, model)
 
                 if early_stop:
+                    log_patch.info(f"Early stopping at EPOCH {epoch + 1} for PATCH {patch_id + 1:04d} | RUN {run + 1}.\n")
                     break
             
             # Load the best model
@@ -588,6 +576,7 @@ if __name__ == "__main__":
                                                                             eval_stage='test_end',
                                                                             eval_metric_name=eval_metric_name,
                                                                             evaluator=evaluator,
+                                                                            evaluate_metrics=test_metrics,
                                                                             edge_raw_features = edge_raw_features,
                                                                             edge_node_pairs=edge_node_pairs,
                                                                             node_mapping=node_mapping,

@@ -6,7 +6,7 @@ import logging
 
 class EarlyStopping(object):
 
-    def __init__(self, patience: int, save_model_folder: str, save_model_name: str, logger: logging.Logger, model_name: str = None):
+    def __init__(self, patience: int, patience_threshold: float, save_model_folder: str, save_model_name: str, logger: logging.Logger, model_name: str = None):
         """
         Early stop strategy.
         :param patience: int, max patience
@@ -16,6 +16,7 @@ class EarlyStopping(object):
         :param model_name: str, model name
         """
         self.patience = patience
+        self.patience_threshold = patience_threshold
         self.counter = 0
         self.best_metrics = {}
         self.early_stop = False
@@ -36,17 +37,20 @@ class EarlyStopping(object):
         metrics_compare_results = []
         for metric_tuple in metrics:
             metric_name, metric_value, higher_better = metric_tuple[0], metric_tuple[1], metric_tuple[2]
-
+            
+            # for each metric, if the computed metric is better than the best metric, set metrics_compare_results to True
+            # use patience_threshold for leniency in comparison 
             if higher_better:
-                if self.best_metrics.get(metric_name) is None or metric_value >= self.best_metrics.get(metric_name):
+                if self.best_metrics.get(metric_name) is None or metric_value >= self.best_metrics.get(metric_name) + self.patience_threshold:
                     metrics_compare_results.append(True)
                 else:
                     metrics_compare_results.append(False)
             else:
-                if self.best_metrics.get(metric_name) is None or metric_value <= self.best_metrics.get(metric_name):
+                if self.best_metrics.get(metric_name) is None or metric_value <= self.best_metrics.get(metric_name) - self.patience_threshold:
                     metrics_compare_results.append(True)
                 else:
                     metrics_compare_results.append(False)
+                    
         # all the computed metrics are better than the best metrics
         if torch.all(torch.tensor(metrics_compare_results)):
             for metric_tuple in metrics:
