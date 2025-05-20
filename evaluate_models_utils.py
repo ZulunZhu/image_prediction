@@ -151,10 +151,6 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
             H = int(np.floor(np.sqrt(L)))
             W = int(np.ceil(L / H))
 
-            logger.info(f"gt_embeddings: (Dimensions: {gt_embeddings.shape})\n {gt_embeddings}\n")
-            logger.info(f"pred_embeddings: (Dimensions: {pred_embeddings.shape})\n {pred_embeddings}\n")
-            logger.info(f"Shape of embeddings: Height (H): {H}, Width (W): {W}\n")
-
             # Process each image
             for i in range(n):
                 # Get dates from node and edge mappings
