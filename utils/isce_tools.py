@@ -223,8 +223,8 @@ def stitchPatchMean(logger, merged_dir, patch_file, patch_bbox, patch_length):
     patch = np.load(os.path.join("image_result",patch_file))   
 
     # Merged file and initialise for first patch if it doesn't exist
-    merged_img_file = os.path.join(merged_dir, patch_file.replace("pred_", "pred_merged_img_"))
-    merged_wgt_file = os.path.join(merged_dir, patch_file.replace("pred_", "pred_merged_wgt_"))
+    merged_img_file = os.path.join(merged_dir, patch_file.replace("pred", "pred_merged_img"))
+    merged_wgt_file = os.path.join(merged_dir, patch_file.replace("pred", "pred_merged_wgt"))
     if not os.path.exists(merged_img_file):
         merged_img = np.full((patch_length,patch_length), np.nan, dtype=np.float64)
         merged_wgt = np.zeros((patch_length,patch_length), dtype=np.float64)
@@ -285,7 +285,7 @@ def stitchPatchMedian(logger, merged_dir, patch_list, pred_file, x, y, chunk_siz
 
     # Initialise merged image if it doesn't exist
     logger.info(f"Starting merging (median) for {pred_file}...")
-    merged_img_file = os.path.join(merged_dir, pred_file.replace("pred_", "pred_merged_img_"))
+    merged_img_file = os.path.join(merged_dir, pred_file.replace("pred", "pred_merged_img"))
     if not os.path.exists(merged_img_file):
         merged_img = np.full((x,y), np.nan, dtype=np.float64)
         np.save(merged_img_file, merged_img)
@@ -367,7 +367,7 @@ def stitchPatchMedian(logger, merged_dir, patch_list, pred_file, x, y, chunk_siz
      # Plot and save merged image once all chunks are processed
     plt.imshow(merged_img, cmap='gray', vmin=0, vmax=1)
     plt.colorbar()
-    save_path = os.path.join(merged_dir, pred_file[:-3].replace("pred_", "pred_merged_img_")+'png')
+    save_path = os.path.join(merged_dir, pred_file[:-4].replace("pred", "pred_merged_img")+'.png')
     plt.savefig(save_path)
     plt.close()
     logger.info(f"Saved merged image for {pred_file} to {save_path}")
