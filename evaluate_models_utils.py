@@ -128,13 +128,33 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
         # Using clamp() for now to mitigate out of bounds coherence values, need to double check ReLu in link predictor to penalize negative values
         # positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).sigmoid().cpu().numpy()
         positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).clamp(min=0.0, max=1.0).cpu().numpy()  
-        
-        logger.info(f"Ground Truth (Dimensions: {edge_raw_features[edge_ids_array].shape}): \n{edge_raw_features[edge_ids_array]}\n")
-        logger.info(f"Prediction (Dimensions: {positive_probabilities.shape}): \n{positive_probabilities}\n")
 
-        # Compute loss (using MAE / L1 loss here)
-        loss = np.mean(np.abs(positive_probabilities - edge_raw_features[edge_ids_array]))
+        # Compute loss (using MAE / L1 loss here), then append to evaluate_metrics
+        loss = np.mean(np.abs(edge_raw_features[edge_ids_array] - positive_probabilities))
         evaluate_metrics.append({f'{eval_stage} MAE loss': loss})
+
+        # Acquire the loss_full_object (only for debugging and logging purposes)
+        # Compute the loss using (GT - Pred) for now
+        loss_full_object = edge_raw_features[edge_ids_array] - positive_probabilities
+
+        # Log the Ground Truth, Prediction, Loss, and Absolute Loss
+        logger.info(f"[{eval_stage.upper()}] GROUND TRUTH (Dimensions: {edge_raw_features[edge_ids_array].shape}): \n{edge_raw_features[edge_ids_array]}\n")
+        logger.info(f"[{eval_stage.upper()}] PREDICTION (Dimensions: {positive_probabilities.shape}): \n{positive_probabilities}\n")
+        logger.info(f"[{eval_stage.upper()}] LOSS (Dimensions: {loss_full_object.shape}): \n{loss_full_object}\n")
+        logger.info(f"[{eval_stage.upper()}] abs(LOSS) (Dimensions: {np.abs(loss_full_object).shape}): \n{np.abs(loss_full_object)}\n")
+
+        # Log the result statistics
+        logger.info(f"\n"
+                    f"[{eval_stage.upper()}] STATISTICS\n"
+                    f"[min | 1st | 25th | 50th | 75th | 99th | max]\n"
+                    f"GROUND TRUTH Percentiles: \n"
+                    f"{np.percentile(edge_raw_features[edge_ids_array], [0, 1, 25, 50, 75, 99, 100])}\n"
+                    f"PREDICTION Percentiles: \n"
+                    f"{np.percentile(positive_probabilities, [0, 1, 25, 50, 75, 99, 100])}\n"
+                    f"LOSS Percentiles: \n"
+                    f"{np.percentile(loss_full_object, [0, 1, 25, 50, 75, 99, 100])}\n"
+                    f"abs(LOSS) Percentiles: \n"
+                    f"{np.percentile(np.abs(loss_full_object), [0, 1, 25, 50, 75, 99, 100])}\n")
 
         # For test_end stage or if visualise is set to true, visualize results 
         if eval_stage == "test_end" or visualize:
@@ -171,7 +191,7 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                 np.save(save_name + "_gt.npy", gt_2d)
                 np.save(save_name + "_pred.npy", pred_2d)
                 np.save(save_name + "_residual.npy", residual_2d)
-                # np.save(save_name + "_residualabs.npy", np.abs(residual_2d))
+                np.save(save_name + "_residualabs.npy", np.abs(residual_2d))
                 
                 # Visualize results
                 evaluate_image_link_prediction_visualiser(logger, gt_2d, pred_2d, save_name + ".png")              
@@ -198,15 +218,15 @@ def evaluate_image_link_prediction_visualiser(logger,gt_img,pred_img,save_path):
             
     # Print result statistics                
     logger.info(f"\n"
-                f"Statistics for {save_path}\n"
-                f"[min | 1st | 25th | 50th | 75th | 99th | max]\n"
-                f"Ground truth percentiles: \n"
+                f"STATISTICS for {save_path}\n"
+                f"[ MIN | 1st | 25th | 50th | 75th | 99th | MAX ]\n"
+                f"GROUND TRUTH Percentiles: \n"
                 f"{np.percentile(gt_img, [0, 1, 25, 50, 75, 99, 100])}\n"
-                f"Prediction percentiles: \n"
+                f"PREDICTION Percentiles: \n"
                 f"{np.percentile(pred_img, [0, 1, 25, 50, 75, 99, 100])}\n"
-                f"Ground truth - prediction percentiles: \n"
+                f"(GROUND TRUTH - PREDICTION) Percentiles: \n"
                 f"{np.percentile(gt_img - pred_img, [0, 1, 25, 50, 75, 99, 100])}\n"
-                f"abs(ground truth - prediction) percentiles: \n"
+                f"abs(GROUND TRUTH - PREDICTION) Percentiles: \n"
                 f"{np.percentile(np.abs(gt_img - pred_img), [0, 1, 25, 50, 75, 99, 100])}\n")
     
     # Compute difference image

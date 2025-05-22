@@ -37,6 +37,12 @@ if __name__ == "__main__":
     # Ignore warnings
     warnings.filterwarnings('ignore')
 
+    # Set Numpy print options
+    np.set_printoptions(suppress=True, precision=5)
+
+    # Set PyTorch print options
+    torch.set_printoptions(sci_mode=False, precision=5)
+
     # Input data
     data_dir = "/aria/zulun_sharing/TEST_KZ_TGNN_sharing_20250214/merged/cors_ALL" # directory containing original image data
     
@@ -62,6 +68,9 @@ if __name__ == "__main__":
     log_main.info(f"\n\n\n~~~~~ The script '{sys.argv[0]}' has STARTED! ~~~~~\n\n\n"
                   f"CONFIGURATION: {args}\n")
     
+    # Start time for the main script
+    start_time_main = time.time()
+
     # Get list bounding boxes for each patch
     sys.setrecursionlimit(100000)  # Increase recursion limit to avoid crashes
     sub_dir = [d for d in os.listdir(data_dir) if d.startswith("cor_") and os.path.isdir(os.path.join(data_dir, d))]  # For getting image dimensions
@@ -222,17 +231,17 @@ if __name__ == "__main__":
 
             model = convert_to_gpu(model, device=args.device)
 
-            save_model_folder = f"./saved_models/patch_{patch_id+1:04d}/{args.model_name}/{args.dataset_name}/{args.save_model_name}/"
+            save_model_folder = f"./saved_models/{args.model_name}/{args.dataset_name}/"
             shutil.rmtree(save_model_folder, ignore_errors=True)
             os.makedirs(save_model_folder, exist_ok=True)
 
             early_stopping = EarlyStopping(patience=args.patience, patience_threshold=args.patience_threshold, save_model_folder=save_model_folder,
                                         save_model_name=args.save_model_name, logger=log_patch, model_name=args.model_name)
 
-            loss_func = nn.BCELoss()    # BCE loss is not used as of the moment. Using L1 loss (MAE) instead.  
+            # loss_func = nn.BCELoss()    # BCE loss is not used as of the moment. Using L1 loss (MAE) instead.  
             evaluator = Evaluator(name=args.dataset_name)
             
-            # Storage arrays for validation metrics
+            # Storage arrays for validation and test metrics
             val_metrics, test_metrics = [], []
 
             ######### EPOCH LOOP #########
@@ -411,17 +420,40 @@ if __name__ == "__main__":
                         # loss = loss_func(input=predicts, target=labels)
                         
                         # Get the predicted edge feature (without applying sigmoid, as we're doing regression)
-                        predicted_edge_feature = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings)
-                        log_patch.info(f"predicted_edge_feature.shape: {predicted_edge_feature.shape}\n")
+                        # Using clamp() for now to mitigate out of bounds coherence values, need to double check ReLu in link predictor to penalize negative values
+                        # predicted_edge_feature = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings) # Uncomment this line for unclamped predictions
+                        predicted_edge_feature = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings).clamp(min=0.0, max=1.0)
 
                         # Compute the L1 loss (MAE) between the predicted edge feature and the ground truth edge feature
                         # Note that edge_raw_features shape is [total no. of edges in full dataset +1, no. of pixels in patch], 
                         # where +1 refers to the first row padded with zeros, so all data in edge_raw_features[0,] should be ignored,
                         # so we +1 to train_data_indices below
-                        # Using clamp() for now to mitigate out of bounds coherence values, need to double check ReLu in link predictor to penalize negative values
-                        predicted_edge_feature = predicted_edge_feature.clamp(min=0.0, max=1.0)
-                        loss = torch.nn.functional.l1_loss(predicted_edge_feature, torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device))
-                        
+                        # train_loss here is computed as the L1 Loss (MAE) for the entire training window and returns a single value
+                        train_loss = torch.nn.functional.l1_loss(predicted_edge_feature, torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device))
+
+                        # Acquire the train_loss_full_object (only for debugging and logging purposes)
+                        # Compute the loss using (GT - Pred) for now
+                        train_loss_full_object = torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device) - predicted_edge_feature
+
+                        # Log the Ground Truth, Prediction, Loss, and Absolute Loss 
+                        log_patch.info(f"[TRAINING] GROUND TRUTH (Dimensions: {torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device).shape}): \n{torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device)}\n")
+                        log_patch.info(f"[TRAINING] PREDICTION (Dimensions: {predicted_edge_feature.shape}): \n{predicted_edge_feature}\n")
+                        log_patch.info(f"[TRAINING] LOSS (Dimensions: {train_loss_full_object.shape}): \n{train_loss_full_object}\n")
+                        log_patch.info(f"[TRAINING] abs(LOSS) (Dimensions: {train_loss_full_object.abs().shape}): \n{train_loss_full_object.abs()}\n")
+
+                        # Log the result statistics
+                        log_patch.info(f"\n"
+                                       f"[TRAINING] STATISTICS\n"
+                                       f"[ MIN | 1st | 25th | 50th | 75th | 99th | MAX ]\n"
+                                       f"GROUND TRUTH Percentiles: \n"
+                                       f"{[round(v, 5) for v in torch.quantile(torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device).flatten(), torch.tensor([0.00, 0.01, 0.25, 0.5, 0.75, 0.99, 1.00])).tolist()]}\n"
+                                       f"PREDICTION Percentiles: \n"
+                                       f"{[round(v, 5) for v in torch.quantile(predicted_edge_feature.flatten(), torch.tensor([0.00, 0.01, 0.25, 0.5, 0.75, 0.99, 1.00])).tolist()]}\n"
+                                       f"LOSS Percentiles: \n"
+                                       f"{[round(v, 5) for v in torch.quantile(train_loss_full_object.flatten(), torch.tensor([0.00, 0.01, 0.25, 0.5, 0.75, 0.99, 1.00])).tolist()]}\n"
+                                       f"abs(LOSS) Percentiles: \n"
+                                       f"{[round(v, 5) for v in torch.quantile(train_loss_full_object.abs().flatten(), torch.tensor([0.00, 0.01, 0.25, 0.5, 0.75, 0.99, 1.00])).tolist()]}\n")
+
                         # Uncomment to visualize train results for debugging
                         if train_window_idx[0] == 0 and epoch == 0:
                             # Check the 1st edge in test data, raw version
@@ -458,14 +490,14 @@ if __name__ == "__main__":
                             evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)    
                         
                         # Append losses to the storage arrays
-                        train_losses.append(loss.item())
-                        train_metrics.append({'Training MAE loss': loss.item()})
+                        train_losses.append(train_loss.item())
+                        train_metrics.append({'Training MAE loss': train_loss.item()})
 
                         # Logging training loss for the specified training window
-                        log_patch.info(f"TRAINING LOSS FOR PATCH {patch_id + 1:04d}, RUN {run + 1}, EPOCH {epoch + 1}, TRAINING WINDOW {train_window_idx[0] + 1}: {loss.item()}\n")
+                        log_patch.info(f"TRAINING LOSS FOR PATCH {patch_id + 1:04d}, RUN {run + 1}, EPOCH {epoch + 1}, TRAINING WINDOW {train_window_idx[0] + 1}: {train_loss.item()}\n")
 
                         optimizer.zero_grad()   # Set the gradients of parameters to zero before backpropagation
-                        loss.backward()         # Backpropagation
+                        train_loss.backward()   # Backpropagation
                         optimizer.step()        # Update model weights (W) and biases (b)
                         sys.stdout.flush()
 
@@ -645,10 +677,10 @@ if __name__ == "__main__":
             for pred_file in sorted([f for f in os.listdir(pred_dir) if f.startswith("test_end_") and f.endswith("_pred.npy")]): 
                 stitchPatchMean(log_patch, merged_dir, pred_file, patch_bbox, args.patch_length)
             # Check if the merged image was created successfully
-            if (count := sum("pred_merged_img.npy" in f for f in os.listdir(merged_dir))):
-                log_main.info(f'Stitched all patches using the {args.stitch_method.upper()} method to create {count} merged image(s) in {merged_dir}')
+            if (merged_img_count := sum("pred_merged_img.npy" in f for f in os.listdir(merged_dir))):
+                log_main.info(f'Stitched all patches using the {args.stitch_method.upper()} method to create {merged_img_count} merged image(s) in {merged_dir}\n\n')
             else:
-                log_main.warning(f'WARNING: No merged image created in {merged_dir} using the {args.stitch_method.upper()} method. Please check the patch result directories.')
+                log_main.warning(f'WARNING: No merged image created in {merged_dir} using the {args.stitch_method.upper()} method. Please check the patch result directories.\n\n')
 
         os.chdir(work_dir)
 
@@ -657,11 +689,24 @@ if __name__ == "__main__":
         for pred_file in sorted([f for f in os.listdir(f"patch_0001/image_result") if f.startswith("test_end_") and f.endswith("_pred.npy")]): 
             stitchPatchMedian(log_main, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
         # Check if the merged image was created successfully
-        if (count := sum("pred_merged_img.npy" in f for f in os.listdir(merged_dir))):
-            log_main.info(f'Stitched all patches using the {args.stitch_method.upper()} method to create {count} merged image(s) in {merged_dir}')
+        if (merged_img_count := sum("pred_merged_img.npy" in f for f in os.listdir(merged_dir))):
+            log_main.info(f'Stitched all patches using the {args.stitch_method.upper()} method to create {merged_img_count} merged image(s) in {merged_dir}\n\n')
         else:
-            log_main.warning(f'WARNING: No merged image created in {merged_dir} using the {args.stitch_method.upper()} method. Please check the patch result directories.')
-        
-    log_main.info(f"\n\n\n~~~~~ The script '{sys.argv[0]}' has COMPLETED SUCCESSFULLY! ~~~~~\n\n\n")
+            log_main.warning(f'WARNING: No merged image created in {merged_dir} using the {args.stitch_method.upper()} method. Please check the patch result directories.\n\n')
+    
+    # End time for the main script
+    end_time_main = time.time()
+
+    # Elapsed time for the main script
+    elapsed_time_main = int(round((end_time_main - start_time_main), 0))
+
+    # Format elapsed time to days, hours, minutes, seconds
+    elapsed_days, elapsed_days_remainder = divmod(int(elapsed_time_main), 86400)
+    elapsed_hours, elapsed_hours_remainder = divmod(elapsed_days_remainder, 3600)
+    elapsed_minutes, elapsed_seconds = divmod(elapsed_hours_remainder, 60)
+
+    log_main.info(f"\nTOTAL ELAPSED TIME: {elapsed_days} Days {elapsed_hours} Hours {elapsed_minutes} Minutes {elapsed_seconds} Seconds ({elapsed_time_main} Seconds)\n")
+
+    log_main.info(f"\n\n\n~~~~~ The script '{sys.argv[0]}' has been COMPLETED SUCCESSFULLY! ~~~~~\n\n\n")
 
     sys.exit()
