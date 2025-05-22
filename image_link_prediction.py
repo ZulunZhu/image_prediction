@@ -421,8 +421,10 @@ if __name__ == "__main__":
                         
                         # Get the predicted edge feature (without applying sigmoid, as we're doing regression)
                         # Using clamp() for now to mitigate out of bounds coherence values, need to double check ReLu in link predictor to penalize negative values
-                        # predicted_edge_feature = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings) # Uncomment this line for unclamped predictions
                         predicted_edge_feature = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings).clamp(min=0.0, max=1.0)
+
+                        # # UNCOMMENT FOR DEBUGGING: Uncomment this line for unclamped predictions
+                        # predicted_edge_feature = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings)
 
                         # Compute the L1 loss (MAE) between the predicted edge feature and the ground truth edge feature
                         # Note that edge_raw_features shape is [total no. of edges in full dataset +1, no. of pixels in patch], 
@@ -435,11 +437,11 @@ if __name__ == "__main__":
                         # Compute the loss using (GT - Pred) for now
                         train_loss_full_object = torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device) - predicted_edge_feature
 
-                        # Log the Ground Truth, Prediction, Loss, and Absolute Loss 
-                        log_patch.info(f"[TRAINING] GROUND TRUTH (Dimensions: {torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device).shape}): \n{torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device)}\n")
-                        log_patch.info(f"[TRAINING] PREDICTION (Dimensions: {predicted_edge_feature.shape}): \n{predicted_edge_feature}\n")
-                        log_patch.info(f"[TRAINING] LOSS (Dimensions: {train_loss_full_object.shape}): \n{train_loss_full_object}\n")
-                        log_patch.info(f"[TRAINING] abs(LOSS) (Dimensions: {train_loss_full_object.abs().shape}): \n{train_loss_full_object.abs()}\n")
+                        # # UNCOMMENT FOR DEBUGGING: Log the Ground Truth, Prediction, Loss, and Absolute Loss 
+                        # log_patch.info(f"[TRAINING] GROUND TRUTH (Dimensions: {torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device).shape}): \n{torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device)}\n")
+                        # log_patch.info(f"[TRAINING] PREDICTION (Dimensions: {predicted_edge_feature.shape}): \n{predicted_edge_feature}\n")
+                        # log_patch.info(f"[TRAINING] LOSS (Dimensions: {train_loss_full_object.shape}): \n{train_loss_full_object}\n")
+                        # log_patch.info(f"[TRAINING] abs(LOSS) (Dimensions: {train_loss_full_object.abs().shape}): \n{train_loss_full_object.abs()}\n")
 
                         # Log the result statistics
                         log_patch.info(f"\n"
@@ -454,7 +456,7 @@ if __name__ == "__main__":
                                        f"abs(LOSS) Percentiles: \n"
                                        f"{[round(v, 5) for v in torch.quantile(train_loss_full_object.abs().flatten(), torch.tensor([0.00, 0.01, 0.25, 0.5, 0.75, 0.99, 1.00])).tolist()]}\n")
 
-                        # Uncomment to visualize train results for debugging
+                        # UNCOMMENT FOR DEBUGGING: to visualize train results
                         if train_window_idx[0] == 0 and epoch == 0:
                             # Check the 1st edge in test data, raw version
                             gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
@@ -527,7 +529,7 @@ if __name__ == "__main__":
                 
                 log_patch.info(f"********** PATCH {patch_id + 1:04d} | RUN {run + 1} | EPOCH {epoch + 1} | VALIDATION **********")
                 if epoch == 9:
-                    # Uncomment to visualize train results for debugging
+                    # UNCOMMENT FOR DEBUGGING: Visualise the validation results
                     val_metrics = evaluate_image_link_prediction_without_dataloader(logger=log_patch,
                                                                                 model_name=args.model_name,
                                                                                 model=model,
