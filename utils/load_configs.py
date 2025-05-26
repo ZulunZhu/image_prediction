@@ -15,7 +15,9 @@ def get_link_prediction_args(is_evaluation: bool = False):
                         choices=["tgbl-wiki", "tgbl-review", "tgbl-coin", "tgbl-comment", "tgbl-flight"])
     parser.add_argument('--patch_length', type=int, default=224, help='patch length')
     parser.add_argument('--patch_overlap', type=int, default=204, help='patch overlap')
-    parser.add_argument('--batch_size', type=int, default=20, help='batch size')
+    parser.add_argument('--temporal_window_width', type=int, default=120, help='temporal window width in number of days')
+    parser.add_argument('--temporal_window_stride', type=int, default=1, help='temporal window stride')
+    parser.add_argument('--batch_size', type=int, default=55, help='batch size')
     parser.add_argument('--model_name', type=str, default='DyGFormer', help='name of the model, note that EdgeBank is only applicable for evaluation',
                         choices=['JODIE', 'DyRep', 'TGAT', 'TGN', 'CAWN', 'EdgeBank', 'TCL', 'GraphMixer', 'DyGFormer'])
     parser.add_argument('--gpu', type=int, default=0, help='number of gpu to use')
@@ -44,12 +46,15 @@ def get_link_prediction_args(is_evaluation: bool = False):
     parser.add_argument('--num_epochs', type=int, default=100, help='number of epochs')
     parser.add_argument('--optimizer', type=str, default='Adam', choices=['SGD', 'Adam', 'RMSprop'], help='name of optimizer')
     parser.add_argument('--weight_decay', type=float, default=0.0, help='weight decay')
-    parser.add_argument('--patience', type=int, default=20, help='patience for early stopping in terms of no. of epochs')
+    parser.add_argument('--patience', type=int, default=10, help='patience for early stopping in terms of no. of epochs')
+    parser.add_argument('--patience_threshold', type=int, default=0.005, help='patience for early stopping in terms of loss threshold, stop early if loss does not improve significantly enough e.g. by 0.005')
     parser.add_argument('--num_runs', type=int, default=5, help='number of runs')
     parser.add_argument('--test_interval_epochs', type=int, default=10, help='how many epochs to perform testing once')
     parser.add_argument('--load_best_configs', action='store_true', default=False, help='whether to load the best configurations')
     parser.add_argument('--stitch_method', type=str, default='median', choices=['mean', 'median'], help='method to handle overlap areas when stitching patches')
     parser.add_argument('--stitch_chunk_size', type=int, default=500, help='chunk size used for median stitching')
+    parser.add_argument('--min_num_total_edges_valid_training_window', type=int, default=40, help='number of edges in total required for each temporal sliding window for it to undergo training. If not met, skip training for the window.')
+    parser.add_argument('--min_num_new_edges_valid_training_window', type=int, default=5, help='number of new edges required for each temporal sliding window for it to undergo training. If not met, skip training for the window.')
 
     try:
         args = parser.parse_args()

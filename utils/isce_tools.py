@@ -1,5 +1,7 @@
+import logging 
 import os
 import numpy as np
+import pandas as pd
 import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
 
@@ -95,20 +97,20 @@ def computePatches(image_x, image_y, patch_length, patch_overlap):
     # Handle the bottom-right corner
     if (image_x - patch_length) % step_x != 0 and (image_y - patch_length) % step_y != 0:
         patchList.append([image_x - patch_length, image_x - 1, image_y - patch_length, image_y - 1])
-    
-    print("Total image width (x-axis): ", image_x)
-    print("Total image length (y-axis): ", image_y) 
-    print("Number of patches: ", len(patchList)) 
-    print("Patch bbox: ", patchList)
+    # Checks
+    # print("Total image width (x-axis): ", image_x)
+    # print("Total image length (y-axis): ", image_y) 
+    # print("Number of patches: ", len(patchList)) 
+    # print("Patch bbox: ", patchList)
     return patchList
 
 
-def prepareData(data_in_dir, data_out_dir, bbox, base_filename='b01_16r4alks'):
+def prepareData(logger, data_in_dir, data_out_dir, bbox, base_filename='b01_16r4alks'):
 
     # Create a directory "image_data" in the current folder to store outputs
+    logger.info(f"\n\n\nPreparing data in {data_out_dir}...\n\n")
     save_dir = os.path.join(data_out_dir, "image_data")
-    if not os.path.exists(save_dir):
-        os.makedirs(save_dir)
+    os.makedirs(save_dir, exist_ok=True)
 
     # Dictionaries and lists to hold the node features and edge features
     date_to_feature = {}   # date (str) -> flattened amplitude vector
@@ -123,19 +125,23 @@ def prepareData(data_in_dir, data_out_dir, bbox, base_filename='b01_16r4alks'):
     for folder in subdirs:
         parts = folder.split('_')
         if len(parts) < 3:
-            print(f"Skipping folder {folder} due to unexpected name format.")
+            logger.info(f"Skipping folder {folder} due to unexpected name format")
             continue
         date1, date2 = parts[1], parts[2]
         folder_path = os.path.join(data_in_dir, folder)
-        amp_file = os.path.join(folder_path, base_filename + ".amp")
+        amp_file = os.path.join(folder_path, base_filename + "_norm.amp")
         cor_file = os.path.join(folder_path, base_filename + ".cor")
+        logger.info(f"\n"
+                    f"Reading folder {folder} with dates {date1} and {date2}\n"
+                    f"{amp_file}\n"
+                    f"{cor_file}\n")
 
         # Check that both the .amp and .cor files (and their XML metadata) exist
         if not (os.path.exists(amp_file) and os.path.exists(amp_file + '.xml')):
-            print(f"Skipping folder {folder}: amplitude file or its XML is missing.")
+            logger.info(f"Skipping folder {folder}: amplitude file or its XML is missing")
             continue
         if not (os.path.exists(cor_file) and os.path.exists(cor_file + '.xml')):
-            print(f"Skipping folder {folder}: coherence file or its XML is missing.")
+            logger.info(f"Skipping folder {folder}: coherence file or its XML is missing")
             continue
 
         # Load node features only if they haven't been loaded before
@@ -143,28 +149,30 @@ def prepareData(data_in_dir, data_out_dir, bbox, base_filename='b01_16r4alks'):
             try:
                 amp1, amp2 = readAmp(amp_file,bbox)
             except Exception as e:
-                print(f"Error reading amplitude file in {folder}: {e}")
+                logger.info(f"Error reading amplitude file in {folder}: {e}")
                 continue
             if date1 not in date_to_feature:
                 date_to_feature[date1] = amp1.flatten()
+                logger.info(f"Added amplitude {date1} to node feature")
             if date2 not in date_to_feature:
                 date_to_feature[date2] = amp2.flatten()
+                logger.info(f"Added amplitude {date2} to node feature")
 
         # Always load the edge feature from the coherence file
         try:
             cor_feature = readCor(cor_file,bbox)
         except Exception as e:
-            print(f"Error reading coherence file in {folder}: {e}")
+            logger.info(f"Error reading coherence file in {folder}: {e}")
             continue
         edge_features_list.append(cor_feature.flatten())
         edge_node_pairs.append((date1, date2))
-        print(f"Processed folder {folder} with dates {date1} and {date2}.")
+        logger.info(f"Added coherence {date1}-{date2} to edge feature")
 
     # Create a sorted list of unique dates and a mapping: date -> node ID (starting at 1)
     sorted_dates = sorted(date_to_feature.keys())
     date_to_id = {date: idx+1 for idx, date in enumerate(sorted_dates)}
 
-    # Build the node features array: each row is the flattened feature for a node
+    # Build the node features array: each row is the flattened node feature for a node
     node_features = np.array([date_to_feature[date] for date in sorted_dates])
     # Build the edge features array: each row is the flattened edge feature for an edge
     edge_features = np.array(edge_features_list)
@@ -174,14 +182,20 @@ def prepareData(data_in_dir, data_out_dir, bbox, base_filename='b01_16r4alks'):
     with open(mapping_file, "w") as f:
         for date in sorted_dates:
             f.write(f"{date_to_id[date]} {date}\n")
-    print(f"Saved node mapping to '{mapping_file}'.")
+    logger.info(f"Saved node mapping to {mapping_file}")
+
+    # Save the node mapping to a dataframe
+    node_mapping = pd.DataFrame({
+        'nodeID': [date_to_id[date] for date in sorted_dates],
+        'date': sorted_dates
+    })
 
     # Save the node and edge features as NumPy arrays
     node_features_file = os.path.join(save_dir, "node_features.npy")
     edge_features_file = os.path.join(save_dir, "edge_features.npy")
     np.save(node_features_file, node_features)
     np.save(edge_features_file, edge_features)
-    print(f"Saved node features to '{node_features_file}' and edge features to '{edge_features_file}'.")
+    logger.info(f"Saved node features to {node_features_file} and edge features to {edge_features_file}")
 
     # Save the edge node pairs (as node IDs) into a text file.
     edge_pairs_file = os.path.join(save_dir, "edge_node_pairs.txt")
@@ -191,26 +205,26 @@ def prepareData(data_in_dir, data_out_dir, bbox, base_filename='b01_16r4alks'):
             tgt = date_to_id[date2]
             # Save with a tab separation between source and target node
             f.write(f"{src}\t{tgt}\n")
-    print(f"Saved edge node pairs to '{edge_pairs_file}'.")
+    logger.info(f"Saved edge node pairs to {edge_pairs_file}")
 
     # Report counts
     num_nodes = node_features.shape[0]
     num_edges = edge_features.shape[0]
-    print(f"Number of nodes: {num_nodes}")
-    print(f"Number of edges: {num_edges}")
+    logger.info(f"Number of nodes: {num_nodes}")
+    logger.info(f"Number of edges: {num_edges}")
 
     # Optionally return the features and mapping information
-    return node_features, edge_features, date_to_id, edge_node_pairs
+    return node_features, edge_features, date_to_id, edge_node_pairs, node_mapping
 
 
-def stitchPatchMean(merged_dir, patch_file, patch_bbox, patch_length):
+def stitchPatchMean(logger, merged_dir, patch_file, patch_bbox, patch_length):
     
     # Patch file to stitch to the merged file
     patch = np.load(os.path.join("image_result",patch_file))   
 
     # Merged file and initialise for first patch if it doesn't exist
-    merged_img_file = os.path.join(merged_dir, patch_file.replace("pred_", "pred_merged_img_"))
-    merged_wgt_file = os.path.join(merged_dir, patch_file.replace("pred_", "pred_merged_wgt_"))
+    merged_img_file = os.path.join(merged_dir, patch_file.replace("pred", "pred_merged_img"))
+    merged_wgt_file = os.path.join(merged_dir, patch_file.replace("pred", "pred_merged_wgt"))
     if not os.path.exists(merged_img_file):
         merged_img = np.full((patch_length,patch_length), np.nan, dtype=np.float64)
         merged_wgt = np.zeros((patch_length,patch_length), dtype=np.float64)
@@ -256,22 +270,22 @@ def stitchPatchMean(merged_dir, patch_file, patch_bbox, patch_length):
     np.save(merged_wgt_file, merged_wgt)
     
     # Save figure of the updated merged image 
-    plt.imshow(merged_img, cmap='gray', vmin=0, vmax=255)
+    plt.imshow(merged_img, cmap='gray', vmin=0, vmax=1)
     plt.colorbar()
     save_path = merged_img_file[:-4] + ".png"
     plt.savefig(save_path)
     plt.close()
-    print(f"Saved merged image to {save_path}")
+    logger.info(f"Saved merged image to {save_path}")
     
     # Optionally return the features and mapping information
     return merged_img, merged_wgt
 
 
-def stitchPatchMedian(merged_dir, patch_list, pred_file, x, y, chunk_size):
+def stitchPatchMedian(logger, merged_dir, patch_list, pred_file, x, y, chunk_size):
 
     # Initialise merged image if it doesn't exist
-    print(f"Starting merging (median) for {pred_file}...")
-    merged_img_file = os.path.join(merged_dir, pred_file.replace("pred_", "pred_merged_img_"))
+    logger.info(f"Starting merging (median) for {pred_file}...")
+    merged_img_file = os.path.join(merged_dir, pred_file.replace("pred", "pred_merged_img"))
     if not os.path.exists(merged_img_file):
         merged_img = np.full((x,y), np.nan, dtype=np.float64)
         np.save(merged_img_file, merged_img)
@@ -283,10 +297,10 @@ def stitchPatchMedian(merged_dir, patch_list, pred_file, x, y, chunk_size):
     for i in range(0, y, chunk_size):  
         for j in range(0, x, chunk_size): 
             chunk_list.append((j, min(j+chunk_size,x)-1, i, min(i+chunk_size,y)-1))
-    print("Total image length (x-axis): ", x)
-    print("Total image width (y-axis): ", y) 
-    print("Number of chunks: ", len(chunk_list)) 
-    print("Chunk bbox: ", chunk_list)
+    logger.info(f"Total image length (x-axis): {x}")
+    logger.info(f"Total image width (y-axis): {y}") 
+    logger.info(f"Number of chunks: {len(chunk_list)}") 
+    logger.info(f"Chunk bbox:\n{chunk_list}")
 
     # Find all the patches which have overlap with a chunk for each chunk
     patch_to_chunks_id = [[] for _ in range(len(chunk_list))]
@@ -307,8 +321,8 @@ def stitchPatchMedian(merged_dir, patch_list, pred_file, x, y, chunk_size):
     
     # Loop through each chunk 
     for chunk_id, chunk_bbox in enumerate(chunk_list):
-        print(f"Chunk {chunk_id+1} with bbox {chunk_bbox} overlaps with the following {len(patch_to_chunks_id[chunk_id])} patch folders:")
-        print(patch_to_chunks_id[chunk_id])
+        logger.info(f"Chunk {chunk_id+1} with bbox {chunk_bbox} overlaps with the following {len(patch_to_chunks_id[chunk_id])} patch folders:")
+        logger.info(patch_to_chunks_id[chunk_id])
         cx1, cx2, cy1, cy2 = chunk_bbox
 
         # Initialise empty 3D chunk array
@@ -341,19 +355,19 @@ def stitchPatchMedian(merged_dir, patch_list, pred_file, x, y, chunk_size):
                 chunk_stack[ccx1:ccx2+1, ccy1:ccy2+1, idx] = patch_img[ppx1:ppx2+1, ppy1:ppy2+1]
             
             else:
-                print(f"Patch file {patch_file} not found.")
+                logger.info(f"Patch file {patch_file} not found.")
 
         # Compute median of the 3D chunk array and output to the larger merged image
         merged_img[cx1:cx2+1, cy1:cy2+1] = np.nanmedian(chunk_stack, axis=2)
 
         # Save the updated merged image at the end of each chunk
         np.save(merged_img_file, merged_img)
-        print(f"Updated merged image with chunk {chunk_id+1} in {merged_img_file}")
+        logger.info(f"Updated merged image with chunk {chunk_id+1} in {merged_img_file}")
 
      # Plot and save merged image once all chunks are processed
-    plt.imshow(merged_img, cmap='gray', vmin=0, vmax=255)
+    plt.imshow(merged_img, cmap='gray', vmin=0, vmax=1)
     plt.colorbar()
-    save_path = os.path.join(merged_dir, pred_file[:-3].replace("pred_", "pred_merged_img_")+'png')
+    save_path = os.path.join(merged_dir, pred_file[:-4].replace("pred", "pred_merged_img")+'.png')
     plt.savefig(save_path)
     plt.close()
-    print(f"Saved merged image for {pred_file} to {save_path}")
+    logger.info(f"Saved merged image for {pred_file} to {save_path}")

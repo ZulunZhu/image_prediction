@@ -7,7 +7,6 @@ from tgb.linkproppred.dataset import LinkPropPredDataset
 from tgb.nodeproppred.dataset_pyg import PyGNodePropPredDataset
 from tgb.linkproppred.negative_sampler import NegativeEdgeSampler
 
-
 class CustomizedDataset(Dataset):
     def __init__(self, indices_list: list):
         """
@@ -47,6 +46,67 @@ def get_idx_data_loader(indices_list: list, batch_size: int, shuffle: bool):
     return data_loader
 
 
+class SlidingWindowDataset(Dataset):
+    def __init__(self, node_ids, edge_data, temporal_window_width, num_nodes):
+        """
+        Dataset for the sliding window approach.
+        :param node_ids: list of all nodes (from 1 to num_nodes)
+        :param edge_data: list of tuples containing src, dst node IDs for each edge
+        :param temporal_window_width: the width of the temporal sliding window
+        :param num_nodes: total number of nodes
+        """
+        super(SlidingWindowDataset, self).__init__()
+        
+        self.node_ids = node_ids
+        self.edge_data = edge_data
+        self.temporal_window_width = temporal_window_width
+        self.num_nodes = num_nodes
+
+    def __getitem__(self, idx):
+        """
+        Generate batch based on sliding window.
+        :param idx: current index for sliding window.
+        :return: filtered edges for current window.
+        """
+        # Define the src and dst nodes for the current batch based on the window
+        src_node_start = idx
+        src_node_end = idx + self.temporal_window_width
+        
+        # Ensure we don't exceed the number of nodes
+        if src_node_end > self.num_nodes:
+            return None
+
+        # Get edges within the window (filtering src and dst nodes)
+        batch_edges = []
+        for src, dst in self.edge_data:
+            if src >= src_node_start and src <= src_node_end and dst >= src_node_start and dst <= src_node_end:
+                batch_edges.append((src, dst))
+
+        return batch_edges
+
+    def __len__(self):
+        # The number of batches is determined by the number of nodes - temporal window size
+        return self.num_nodes - self.temporal_window_width + 1
+
+def get_sliding_window_data_loader(edge_data, temporal_window_width, batch_size, num_nodes, shuffle=False):
+    """
+    Get data loader for sliding window batching.
+    :param edge_data: list of edge tuples (src, dst)
+    :param temporal_window_width: temporal window width (i.e., how many nodes to consider in each window)
+    :param batch_size: batch size for training
+    :param num_nodes: total number of nodes in the graph
+    :param shuffle: whether to shuffle the batches
+    :return: DataLoader instance
+    """
+    dataset = SlidingWindowDataset(node_ids=list(range(1, num_nodes + 1)), 
+                                   edge_data=edge_data, 
+                                   temporal_window_width=temporal_window_width, 
+                                   num_nodes=num_nodes)
+    
+    data_loader = DataLoader(dataset=dataset, batch_size=batch_size, shuffle=shuffle, drop_last=False)
+    return data_loader
+
+
 class Data:
 
     def __init__(self, src_node_ids: np.ndarray, dst_node_ids: np.ndarray, node_interact_times: np.ndarray, edge_ids: np.ndarray,
@@ -83,7 +143,6 @@ data_num_nodes_map = {
     "tgbn-genre": 992,
     "tgbn-reddit": 11068
 }
-
 
 data_num_edges_map = {
     "tgbl-wiki": 157474,
@@ -131,7 +190,6 @@ def get_link_prediction_image_data(dataset_name: str):
     node_raw_features = np.vstack([np.zeros((1, node_raw_features.shape[1])), node_raw_features])
     edge_raw_features = np.vstack([np.zeros((1, edge_raw_features.shape[1])), edge_raw_features])
 
-   
     # Create edge IDs starting from 1 (since index 0 is the padded edge).
     edge_ids = np.arange(1, num_edges + 1, dtype=np.int64)
 
@@ -142,7 +200,7 @@ def get_link_prediction_image_data(dataset_name: str):
     labels = np.ones_like(src_node_ids, dtype=np.int64)
 
     # Sort edges by timestamp (time order).
-    sort_idx = np.argsort(node_interact_times)
+    sort_idx = np.argsort(node_interact_times, kind="stable")
     src_node_ids = src_node_ids[sort_idx]
     dst_node_ids = dst_node_ids[sort_idx]
     edge_ids = edge_ids[sort_idx]
@@ -217,7 +275,7 @@ def get_link_prediction_image_data(dataset_name: str):
     return node_raw_features, edge_raw_features, full_data, train_data, val_data, test_data, eval_neg_edge_sampler, eval_metric_name
 
 
-def get_link_prediction_image_data_split_by_nodes(dataset_name: str):
+def get_link_prediction_image_data_split_by_nodes(logger, dataset_name: str):
     """
     Generate data for link prediction task using pre-generated image data.
     Loads node features, edge features, and edge node pairs from the "image_data" folder.
@@ -230,6 +288,7 @@ def get_link_prediction_image_data_split_by_nodes(dataset_name: str):
              eval_neg_edge_sampler, eval_metric_name
     """
     # Load pre-generated data from the "image_data" folder in the current directory.
+    logger.info(f"\n\n\nSplitting data into train, validate, and test sets...\n\n")
     dataset_name = 'image_data'
     save_dir = os.path.join(os.getcwd(), "image_data")
     node_raw_features = np.load(os.path.join(save_dir, "node_features.npy"))  # shape: (num_nodes, feat_dim)
@@ -272,9 +331,9 @@ def get_link_prediction_image_data_split_by_nodes(dataset_name: str):
     # train_end = int(num_edges * 0.7)                   # Edge end-index for the training set
     # val_end = int(num_edges * 0.9)                     # Edge end-index for the validation set
     # test_end = int(num_edges * 1.0)                    # Edge end-index for the testing set
-    train_end_node = int(num_nodes * 0.7)              # Node end-index for the training set 
-    val_end_node = int(num_nodes * 0.9)                # Node end-index for the validation set
-    test_end_node = int(num_nodes * 1.0)               # Node end-index for the testing set
+    train_end_node = int(np.ceil(num_nodes * 0.7))       # Node end-index for the training set 
+    val_end_node = int(np.ceil(num_nodes * 0.9))         # Node end-index for the validation set
+    test_end_node = int(np.ceil(num_nodes * 1.0))        # Node end-index for the testing set
 
     # Create boolean masks (initiate all the masks as false)
     train_mask = np.zeros(num_edges, dtype=bool)        
@@ -317,32 +376,32 @@ def get_link_prediction_image_data_split_by_nodes(dataset_name: str):
                      node_interact_times=node_interact_times[test_mask], edge_ids=edge_ids[test_mask],
                      labels=labels[test_mask])
 
-    print("The dataset has {} interactions, involving {} different nodes".format(
+    logger.info("The dataset has {} interactions, involving {} different nodes".format(
           full_data.num_interactions, full_data.num_unique_nodes))
-    print("The training dataset has {} interactions, involving {} different nodes".format(
+    logger.info("The training dataset has {} interactions, involving {} different nodes".format(
           train_data.num_interactions, train_data.num_unique_nodes))
-    print("The validation dataset has {} interactions, involving {} different nodes".format(
+    logger.info("The validation dataset has {} interactions, involving {} different nodes".format(
           val_data.num_interactions, val_data.num_unique_nodes))
-    print("The test dataset has {} interactions, involving {} different nodes".format(
+    logger.info("The test dataset has {} interactions, involving {} different nodes".format(
           test_data.num_interactions, test_data.num_unique_nodes))
     
     # ---- Feature Dimension Checks and Printing ----
     # Check that the node feature matrix is 2D and that every row has the same dimension.
     if node_raw_features.ndim != 2:
-        print("Error: Node features should be a 2D array!")
+        logger.info(f"Error: Node features should be a 2D array!")
     else:
         node_dim = node_raw_features.shape[1]
         # In a well-formed numpy 2D array, every row has the same dimension.
-        print("Node feature matrix shape:", node_raw_features.shape)
-        print("All node feature rows have consistent dimension:", node_dim)
+        logger.info(f"Dimension of node_raw_features: {node_raw_features.shape}")
+        logger.info(f"All node feature rows have consistent dimension: {node_dim}")
 
     # Check the edge feature matrix similarly.
     if edge_raw_features.ndim != 2:
-        print("Error: Edge features should be a 2D array!")
+        logger.info(f"Error: Edge features should be a 2D array!")
     else:
         edge_dim = edge_raw_features.shape[1]
-        print("Edge feature matrix shape:", edge_raw_features.shape)
-        print("All edge feature rows have consistent dimension:", edge_dim)
+        logger.info(f"Dimension of edge_raw_features: {edge_raw_features.shape}")
+        logger.info(f"All edge feature rows have consistent dimension: {edge_dim}")
     # --------------------------------------------------
     
     return node_raw_features, edge_raw_features, full_data, train_data, val_data, test_data, eval_neg_edge_sampler, eval_metric_name
@@ -576,3 +635,19 @@ def get_node_classification_tgb_data(dataset_name: str):
     print("The test dataset has {} interactions, involving {} different nodes".format(test_data.num_interactions, test_data.num_unique_nodes))
 
     return node_raw_features, edge_raw_features, full_data, train_data, val_data, test_data, eval_metric_name, num_classes
+
+def load_edge_node_pairs(file_path):
+    """
+    Loads the edge node pairs from the text file.
+    :param file_path: str, the path to the file containing edge node pairs
+    :return: list of tuples, where each tuple is a (src_node, dst_node)
+    """
+    edge_node_pairs = []
+    
+    with open(file_path, 'r') as f:
+        for line in f:
+            # Each line contains a src and dst node, separated by space
+            src_node, dst_node = map(int, line.strip().split())
+            edge_node_pairs.append((src_node, dst_node))
+    
+    return edge_node_pairs
