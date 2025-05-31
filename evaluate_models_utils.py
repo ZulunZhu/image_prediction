@@ -181,7 +181,7 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                 # # For test_end stage there is no epoch value. If no epochs specified, None is returned.
                 epoch = kwargs.get("epoch", None)
                 if epoch != None:
-                    save_distributions_name = os.path.join(image_distributions_folder, f"{eval_stage}_epoch-{epoch}_all-edges_distributions")
+                    save_distributions_name = os.path.join(image_distributions_folder, f"{eval_stage}_epoch-{epoch:04d}_all-edges_distributions")
                 else:
                     save_distributions_name = os.path.join(image_distributions_folder, f"{eval_stage}_distributions")
                 
@@ -231,7 +231,7 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                     dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
 
                     # Get the file name (individual edges in "test_end")
-                    save_edge_distributions_name = os.path.join(image_distributions_folder, f"{eval_stage}_src-{src_node_id}_dst-{dst_node_id}_edge-{edge_ids_array[i]}_{src_date_str}-{dst_date_str}_distributions")
+                    save_edge_distributions_name = os.path.join(image_distributions_folder, f"{eval_stage}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}_distributions")
 
                     # Plot the distributions (individual edges in "test_end")
                     evaluate_image_link_prediction_plot_distributions(logger=logger,
@@ -265,7 +265,7 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                 dst_date = node_mapping.loc[node_mapping['nodeID'] == dst_node_id, 'date'].values[0]
                 src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
                 dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
-                save_name = os.path.join(result_folder, f"{eval_stage}_src-{src_node_id}_dst-{dst_node_id}_edge-{edge_ids_array[i]}_{src_date_str}-{dst_date_str}") 
+                save_name = os.path.join(result_folder, f"{eval_stage}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}") 
                 
                 # Reshape ground truth and prediction into 2D
                 gt_2d = reshape_to_2d(gt_embeddings[i], H, W)
