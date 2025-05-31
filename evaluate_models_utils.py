@@ -10,6 +10,9 @@ import argparse
 import os
 import json
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FormatStrFormatter, MultipleLocator
+from matplotlib.gridspec import GridSpec
+import seaborn as sns
 from skimage.exposure import match_histograms
 from collections import defaultdict
 from tgb.linkproppred.negative_sampler import NegativeEdgeSampler
@@ -39,7 +42,11 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                                                     node_mapping: pd.DataFrame,
                                                     num_neighbors: int = 20, 
                                                     time_gap: int = 2000,
-                                                    visualize: bool = False):
+                                                    l1_regularisation_lambda: float = 0.0,
+                                                    l2_regularisation_lambda: float = 0.0,
+                                                    visualize: bool = False,
+                                                    plot_distributions: bool = True,
+                                                    **kwargs):
     """
     Evaluate models on the link prediction task without requiring a data loader
     Processing all edges in a single batch
@@ -122,39 +129,117 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
         else:
             raise ValueError(f"Wrong value for model_name {model_name}!")
 
-        # Compute positive probabilities
-        # sigmoid() skews the distribution while keeping values within 0 to 1
-        # clamp() keeps values within 0 to 1 without changing the distribution of values between 0 and 1 
-        # Using clamp() for now to mitigate out of bounds coherence values, need to double check ReLu in link predictor to penalize negative values
+        # # Predict the positive probabilities
+        # # UNCOMMENT FOR DEBUGGING: Uncomment the following lines for edge predictions with different modification operations
+        # # When changing the following lines, we must also change the edge prediction lines in "image_link_prediction.py"
+        # # (1) predictions without modification operations 
+        # # (2) predictions with an external sigmoid operation (not recommended)
+        # # (3) predictions with an external clamp operation (not recommended)
+        positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).cpu().numpy()
         # positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).sigmoid().cpu().numpy()
-        positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).clamp(min=0.0, max=1.0).cpu().numpy()  
+        # positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).clamp(min=0.0, max=1.0).cpu().numpy()
 
-        # Compute loss (using MAE / L1 loss here), then append to evaluate_metrics
-        loss = np.mean(np.abs(edge_raw_features[edge_ids_array] - positive_probabilities))
-        evaluate_metrics.append({f'{eval_stage} MAE loss': loss})
+        # Acquire the residuals_full_object, where Residuals = (Ground Truth - Prediction)
+        residuals_full_object = edge_raw_features[edge_ids_array] - positive_probabilities
 
-        # Acquire the loss_full_object (only for debugging and logging purposes)
-        # Compute the loss using (GT - Pred) for now
-        loss_full_object = edge_raw_features[edge_ids_array] - positive_probabilities
-
-        # Log the Ground Truth, Prediction, Loss, and Absolute Loss
+        # Log the Ground Truth, Prediction, Residuals, and Absolute Residuals
         logger.info(f"[{eval_stage.upper()}] GROUND TRUTH (Dimensions: {edge_raw_features[edge_ids_array].shape}): \n{edge_raw_features[edge_ids_array]}\n")
         logger.info(f"[{eval_stage.upper()}] PREDICTION (Dimensions: {positive_probabilities.shape}): \n{positive_probabilities}\n")
-        logger.info(f"[{eval_stage.upper()}] LOSS (Dimensions: {loss_full_object.shape}): \n{loss_full_object}\n")
-        logger.info(f"[{eval_stage.upper()}] abs(LOSS) (Dimensions: {np.abs(loss_full_object).shape}): \n{np.abs(loss_full_object)}\n")
+        logger.info(f"[{eval_stage.upper()}] (GROUND TRUTH - PREDICTION) (Dimensions: {residuals_full_object.shape}): \n{residuals_full_object}\n")
+        logger.info(f"[{eval_stage.upper()}] abs(GROUND TRUTH - PREDICTION) (Dimensions: {np.abs(residuals_full_object).shape}): \n{np.abs(residuals_full_object)}\n")
 
         # Log the result statistics
         logger.info(f"\n"
                     f"[{eval_stage.upper()}] STATISTICS\n"
-                    f"[min | 1st | 25th | 50th | 75th | 99th | max]\n"
+                    f"[ MIN | 1st | 25th | 50th | 75th | 99th | MAX ]\n"
                     f"GROUND TRUTH Percentiles: \n"
                     f"{np.percentile(edge_raw_features[edge_ids_array], [0, 1, 25, 50, 75, 99, 100])}\n"
                     f"PREDICTION Percentiles: \n"
                     f"{np.percentile(positive_probabilities, [0, 1, 25, 50, 75, 99, 100])}\n"
-                    f"LOSS Percentiles: \n"
-                    f"{np.percentile(loss_full_object, [0, 1, 25, 50, 75, 99, 100])}\n"
-                    f"abs(LOSS) Percentiles: \n"
-                    f"{np.percentile(np.abs(loss_full_object), [0, 1, 25, 50, 75, 99, 100])}\n")
+                    f"(GROUND TRUTH - PREDICTION) Percentiles: \n"
+                    f"{np.percentile(residuals_full_object, [0, 1, 25, 50, 75, 99, 100])}\n"
+                    f"abs(GROUND TRUTH - PREDICTION) Percentiles: \n"
+                    f"{np.percentile(np.abs(residuals_full_object), [0, 1, 25, 50, 75, 99, 100])}\n")
+
+        # Plotting distributions for GT, Pred, Residuals, abs(Residuals)
+        if eval_stage == "test_end" or plot_distributions:
+
+            # Create the output folder if it doesn't exist
+            image_distributions_folder = os.path.join(os.getcwd(), "image_distributions")
+            os.makedirs(image_distributions_folder, exist_ok=True)
+
+            # Flatten the GT, Pred, Residuals, abs(Residuals) objects for distribution plotting
+            gt_dist_flat = edge_raw_features[edge_ids_array].flatten()
+            pred_dist_flat = positive_probabilities.flatten()
+            residuals_dist_flat = residuals_full_object.flatten()
+            abs_residuals_dist_flat = np.abs(residuals_full_object).flatten()
+
+            # Plot distributions for evaluation stages (except for "test_end")
+            if eval_stage != "test_end":
+
+                # # Get the relevant epoch that is being evaluated (mainly for validation stage). 
+                # # For test_end stage there is no epoch value. If no epochs specified, None is returned.
+                epoch = kwargs.get("epoch", None)
+                if epoch != None:
+                    save_distributions_name = os.path.join(image_distributions_folder, f"{eval_stage}_epoch-{epoch}_all-edges_distributions")
+                else:
+                    save_distributions_name = os.path.join(image_distributions_folder, f"{eval_stage}_distributions")
+                
+                # Plot the distributions
+                evaluate_image_link_prediction_plot_distributions(logger=logger,
+                                                                  gt_img=gt_dist_flat,
+                                                                  pred_img=pred_dist_flat,
+                                                                  residuals_img=residuals_dist_flat,
+                                                                  abs_residuals_img=abs_residuals_dist_flat,
+                                                                  save_path=save_distributions_name+".png")
+
+            # Plot distributions for the "test_end" evaluation stage
+            # For the "test_end" stage, we plot the distributions of (1) all edges collectively, and (2) each individual edge
+            elif eval_stage == "test_end":
+
+                # First, plot distributions of all edges collectively in "test_end"
+                # Get the file name (all edges collectively in "test_end")
+                save_distributions_name = os.path.join(image_distributions_folder, f"{eval_stage}_all-edges_distributions")
+
+                # Plot the distributions (all edges collectively in "test_end")
+                evaluate_image_link_prediction_plot_distributions(logger=logger,
+                                                                  gt_img=gt_dist_flat,
+                                                                  pred_img=pred_dist_flat,
+                                                                  residuals_img=residuals_dist_flat,
+                                                                  abs_residuals_img=abs_residuals_dist_flat,
+                                                                  save_path=save_distributions_name+".png")
+                
+                # Next, plot distributions of each individual edge in "test_end"
+                # Get the num_edges and relevant node and date information for each edge
+                num_edges = positive_probabilities.shape[0]
+
+                # Iterate through the individual edges
+                for i in range(num_edges):
+
+                    # Flatten the GT, Pred, Residuals, abs(Residuals) objects for each edge for distribution plotting
+                    gt_edge_dist_flat = edge_raw_features[edge_ids_array][i].flatten()
+                    pred_edge_dist_flat = positive_probabilities[i].flatten()
+                    residuals_edge_dist_flat = residuals_full_object[i].flatten()
+                    abs_residuals_edge_dist_flat = np.abs(residuals_full_object)[i].flatten()
+
+                    # Get dates from node and edge mappings
+                    edge_id = edge_ids_array[i]
+                    src_node_id, dst_node_id = edge_node_pairs[edge_id-1]
+                    src_date = node_mapping.loc[node_mapping['nodeID'] == src_node_id, 'date'].values[0]
+                    dst_date = node_mapping.loc[node_mapping['nodeID'] == dst_node_id, 'date'].values[0]
+                    src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
+                    dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
+
+                    # Get the file name (individual edges in "test_end")
+                    save_edge_distributions_name = os.path.join(image_distributions_folder, f"{eval_stage}_src-{src_node_id}_dst-{dst_node_id}_edge-{edge_ids_array[i]}_{src_date_str}-{dst_date_str}_distributions")
+
+                    # Plot the distributions (individual edges in "test_end")
+                    evaluate_image_link_prediction_plot_distributions(logger=logger,
+                                                                      gt_img=gt_edge_dist_flat,
+                                                                      pred_img=pred_edge_dist_flat,
+                                                                      residuals_img=residuals_edge_dist_flat,
+                                                                      abs_residuals_img=abs_residuals_edge_dist_flat,
+                                                                      save_path=save_edge_distributions_name+".png")
 
         # For test_end stage or if visualise is set to true, visualize results 
         if eval_stage == "test_end" or visualize:
@@ -196,10 +281,182 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                 # Visualize results
                 evaluate_image_link_prediction_visualiser(logger, gt_2d, pred_2d, save_name + ".png")              
 
+        # Compute loss (using MAE / L1 loss here)
+        loss = np.mean(np.abs(edge_raw_features[edge_ids_array] - positive_probabilities))
+
+        # Apply loss regularisations (L1 / L2 / Elastic Net), if applicable
+        # Apply L1 Regularisation (Lasso), if applicable
+        if l1_regularisation_lambda != 0 and l2_regularisation_lambda == 0:
+            logger.info(f"[{eval_stage.upper()}] Conducting L1-Regularisation (Lasso) on the Loss Function")
+            l1_norm = sum(p.abs().sum() for p in model.parameters() if p.requires_grad)
+            loss += l1_regularisation_lambda * l1_norm.item()
+            logger.info(f"[{eval_stage.upper()}] L1-REGULARISED LOSS (L1-Lambda = {l1_regularisation_lambda}): {loss}\n")
+        # Apply L2 Regularisation (Ridge), if applicable
+        elif l1_regularisation_lambda == 0 and l2_regularisation_lambda != 0:
+            logger.info(f"[{eval_stage.upper()}] Conducting L2-Regularisation (Ridge) on the Loss Function")
+            l2_norm = sum(p.pow(2.0).sum() for p in model.parameters() if p.requires_grad)
+            loss += l2_regularisation_lambda * l2_norm.item()
+            logger.info(f"[{eval_stage.upper()}] L2-REGULARISED LOSS (L2-Lambda = {l2_regularisation_lambda}): {loss}\n")
+        # Apply Elastic Net Regularisation (L1 + L2 Regularisation), if applicable
+        elif l1_regularisation_lambda != 0 and l2_regularisation_lambda != 0:
+            logger.info(f"[{eval_stage.upper()}] Conducting Elastic Net Regularisation (L1 & L2 regularisation) on the Loss Function")
+            l1_norm = sum(p.abs().sum() for p in model.parameters() if p.requires_grad)
+            l2_norm = sum(p.pow(2.0).sum() for p in model.parameters() if p.requires_grad)
+            loss += (l1_regularisation_lambda * l1_norm.item()) + (l2_regularisation_lambda * l2_norm.item())
+            logger.info(f"[{eval_stage.upper()}] ELASTIC-NET-REGULARISED LOSS (L1-Lambda = {l1_regularisation_lambda}, L2-Lambda = {l2_regularisation_lambda}): {loss}\n")
+        # If no regularisation takes place, retain the original loss function
+        else:
+            logger.info(f"[{eval_stage.upper()}] No regularisation was applied and the original loss function remains unchanged.\n")
+
+        # Append the loss to evaluate_metrics 
+        evaluate_metrics.append({f'{eval_stage} MAE loss': loss})
+
     return evaluate_metrics
 
 
-def evaluate_image_link_prediction_visualiser(logger,gt_img,pred_img,save_path):
+def evaluate_image_link_prediction_plot_distributions(logger, gt_img, pred_img, residuals_img, abs_residuals_img, save_path):
+
+    # # Visualise the Histograms and CDFs of Ground Truth, Prediction, Residuals, abs(Residuals) in a (2 x 3) subplot
+    # 1st subplot (top left): [Histogram] Ground Truth & Prediction
+    # 2nd subplot (top middle): [Histogram] (Ground Truth - Prediction)
+    # 3rd subplot (top right): [Histogram] abs(Ground Truth - Prediction)
+    # 4th subplot (bottom left): [CDF] Ground Truth & Prediction
+    # 5th subplot (bottom middle): [CDF] (Ground Truth - Prediction)
+    # 6th subplot (bottom right): [CDF] abs(Ground Truth - Prediction)
+
+    # Compute percentiles from input arrays
+    def get_percentile_stats(arr):
+        percentiles = [0, 1, 25, 50, 75, 99, 100]
+        values = np.percentile(arr.flatten(), percentiles)
+        stat_text = "\n".join([f"{p:>3.0f} pct: {v:.5f}" for p, v in zip(percentiles, values)])
+        return stat_text
+    
+    # Add statistical data text to the axes
+    def add_stat_text(ax, stat_text):
+        ax.text(0.98, 0.98, stat_text, transform=ax.transAxes, fontsize=14, verticalalignment='top', horizontalalignment='right', bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+
+    # Initialize figure and GridSpec (2 rows x 3 columns)
+    fig = plt.figure(figsize=(24, 16))
+    gs = GridSpec(2, 3, figure=fig)
+
+    # [Histogram] Ground Truth & Prediction
+    ax0 = fig.add_subplot(gs[0, 0])
+    sns.histplot(gt_img.flatten(), bins=100, stat='percent', element='step', fill=False, color='blue', linewidth=1.5, label='Ground Truth', ax=ax0, kde=False)
+    sns.histplot(pred_img.flatten(), bins=100, stat='percent', element='step', fill=False, color='red', linewidth=1.5, label='Prediction', ax=ax0, kde=False)
+    ax0.set_xlim([-0.025, 1.025])
+    ax0.set_xlabel("Values", fontsize=16)
+    ax0.set_ylabel("Percentage", fontsize=16)
+    ax0.set_title("[Histogram] Ground Truth & Prediction", fontsize=24)
+    ax0.legend(fontsize=16)
+    ax0.tick_params(axis='both', labelsize=14)
+    ax0.tick_params(axis='x', rotation=45)
+    ax0.grid(True, linestyle='-', linewidth=0.5, alpha=0.5)
+    ax0.xaxis.set_major_locator(MultipleLocator(0.05))
+    ax0.xaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+    ax0.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+    stat_text0 = f"Ground Truth\n{get_percentile_stats(gt_img)}\n\nPrediction\n{get_percentile_stats(pred_img)}"
+    add_stat_text(ax0, stat_text0)
+
+    # [Histogram] Residuals (Ground Truth - Prediction)
+    ax1 = fig.add_subplot(gs[0, 1])
+    sns.histplot(residuals_img.flatten(), bins=100, stat='percent', element='step', fill=False, color='green', linewidth=1.5, label='Residuals', ax=ax1, kde=False)
+    ax1.set_xlim([-1.05, 1.05])
+    ax1.set_xlabel("Values", fontsize=16)
+    ax1.set_ylabel("Percentage", fontsize=16)
+    ax1.set_title("[Histogram] (Ground Truth - Prediction)", fontsize=24)
+    ax1.tick_params(axis='both', labelsize=14)
+    ax1.tick_params(axis='x', rotation=45)
+    ax1.grid(True, linestyle='-', linewidth=0.5, alpha=0.5)
+    ax1.xaxis.set_major_locator(MultipleLocator(0.1))
+    ax1.xaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+    ax1.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+    stat_text1 = f"(GT - Pred)\n{get_percentile_stats(residuals_img)}"
+    add_stat_text(ax1, stat_text1)
+
+    # [Histogram] Absolute Residuals (abs(Ground Truth - Prediction))
+    ax2 = fig.add_subplot(gs[0, 2])
+    sns.histplot(abs_residuals_img.flatten(), bins=100, stat='percent', element='step', fill=False, color='brown', linewidth=1.5, label='Abs Residuals', ax=ax2, kde=False)
+    ax2.set_xlim([-0.025, 1.025])
+    ax2.set_xlabel("Values", fontsize=16)
+    ax2.set_ylabel("Percentage", fontsize=16)
+    ax2.set_title("[Histogram] abs(Ground Truth - Prediction)", fontsize=24)
+    ax2.tick_params(axis='both', labelsize=14)
+    ax2.tick_params(axis='x', rotation=45)
+    ax2.grid(True, linestyle='-', linewidth=0.5, alpha=0.5)
+    ax2.xaxis.set_major_locator(MultipleLocator(0.05))
+    ax2.xaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+    ax2.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+    stat_text2 = f"abs(GT - Pred)\n{get_percentile_stats(abs_residuals_img)}"
+    add_stat_text(ax2, stat_text2)
+
+    # [CDF] Ground Truth & Prediction
+    ax3 = fig.add_subplot(gs[1, 0])
+    sns.ecdfplot(gt_img.flatten(), ax=ax3, color='blue', label='Ground Truth', linewidth=1.5, stat='percent')
+    sns.ecdfplot(pred_img.flatten(), ax=ax3, color='red', label='Prediction', linewidth=1.5, stat='percent')
+    for line in ax3.lines:
+        line.set_drawstyle('steps-post')
+    ax3.set_xlim([-0.025, 1.025])
+    ax3.set_ylim([0, 100])
+    ax3.set_xlabel("Values", fontsize=16)
+    ax3.set_ylabel("Cumulative Percentage", fontsize=16)
+    ax3.set_title("[CDF] Ground Truth & Prediction", fontsize=24)
+    ax3.legend(fontsize=16)
+    ax3.tick_params(axis='both', labelsize=14)
+    ax3.tick_params(axis='x', rotation=45)
+    ax3.grid(True, linestyle='-', linewidth=0.5, alpha=0.5)
+    ax3.xaxis.set_major_locator(MultipleLocator(0.05))
+    ax3.yaxis.set_major_locator(MultipleLocator(5))
+    ax3.xaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+    stat_text3 = f"Ground Truth\n{get_percentile_stats(gt_img)}\n\nPrediction\n{get_percentile_stats(pred_img)}"
+    add_stat_text(ax3, stat_text3)
+
+    # [CDF] Residuals (Ground Truth - Prediction)
+    ax4 = fig.add_subplot(gs[1, 1])
+    sns.ecdfplot(residuals_img.flatten(), ax=ax4, color='green', label='Residuals', linewidth=1.5, stat='percent')
+    for line in ax4.lines:
+        line.set_drawstyle('steps-post')
+    ax4.set_xlim([-1.05, 1.05])
+    ax4.set_ylim([0, 100])
+    ax4.set_xlabel("Values", fontsize=16)
+    ax4.set_ylabel("Cumulative Percentage", fontsize=16)
+    ax4.set_title("[CDF] (Ground Truth - Prediction)", fontsize=24)
+    ax4.tick_params(axis='both', labelsize=14)
+    ax4.tick_params(axis='x', rotation=45)
+    ax4.grid(True, linestyle='-', linewidth=0.5, alpha=0.5)
+    ax4.xaxis.set_major_locator(MultipleLocator(0.1))
+    ax4.yaxis.set_major_locator(MultipleLocator(5))
+    ax4.xaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+    stat_text4 = f"(GT - Pred)\n{get_percentile_stats(residuals_img)}"
+    add_stat_text(ax4, stat_text4)
+
+    # [CDF] Absolute Residuals (abs(Ground Truth - Prediction))
+    ax5 = fig.add_subplot(gs[1, 2])
+    sns.ecdfplot(abs_residuals_img.flatten(), ax=ax5, color='brown', label='Abs Residuals', linewidth=1.5, stat='percent')
+    for line in ax5.lines:
+        line.set_drawstyle('steps-post')
+    ax5.set_xlim([-0.025, 1.025])
+    ax5.set_ylim([0, 100])
+    ax5.set_xlabel("Values", fontsize=16)
+    ax5.set_ylabel("Cumulative Percentage", fontsize=16)
+    ax5.set_title("[CDF] abs(Ground Truth - Prediction)", fontsize=24)
+    ax5.tick_params(axis='both', labelsize=14)
+    ax5.tick_params(axis='x', rotation=45)
+    ax5.grid(True, linestyle='-', linewidth=0.5, alpha=0.5)
+    ax5.xaxis.set_major_locator(MultipleLocator(0.05))
+    ax5.yaxis.set_major_locator(MultipleLocator(5))
+    ax5.xaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+    stat_text5 = f"abs(GT - Pred)\n{get_percentile_stats(abs_residuals_img)}"
+    add_stat_text(ax5, stat_text5)
+
+    # Save distribution plots
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path)
+    plt.close()
+    logger.info(f"Saved distribution plots to: \n{save_path}\n")
+
+
+def evaluate_image_link_prediction_visualiser(logger, gt_img, pred_img, save_path):
     
     def highlight_differences(pred_img, gt_img, threshold=0.1):
         """
@@ -218,7 +475,7 @@ def evaluate_image_link_prediction_visualiser(logger,gt_img,pred_img,save_path):
             
     # Print result statistics                
     logger.info(f"\n"
-                f"STATISTICS for {save_path}\n"
+                f"STATISTICS for: {save_path}\n"
                 f"[ MIN | 1st | 25th | 50th | 75th | 99th | MAX ]\n"
                 f"GROUND TRUTH Percentiles: \n"
                 f"{np.percentile(gt_img, [0, 1, 25, 50, 75, 99, 100])}\n"
@@ -231,19 +488,53 @@ def evaluate_image_link_prediction_visualiser(logger,gt_img,pred_img,save_path):
     
     # Compute difference image
     # diff_img = highlight_differences(pred_img, gt_img, threshold=0.1)
-    
-    # Visualize results
-    fig, axs = plt.subplots(1, 3, figsize=(12, 4))
-    im0 = axs[0].imshow(gt_img, cmap='gray', vmin=0, vmax=1)
-    axs[0].set_title("Ground Truth"); fig.colorbar(im0, ax=axs[0])
-    im1 = axs[1].imshow(pred_img, cmap='gray', vmin=0, vmax=1)
-    axs[1].set_title("Predicted"); fig.colorbar(im1, ax=axs[1])
-    im2 = axs[2].imshow(gt_img - pred_img, cmap='gray', vmin=-1, vmax=1)
-    axs[2].set_title(f"Difference (GT-Pred)"); fig.colorbar(im2, ax=axs[2])
+
+    # Visualise the results: GT, Pred, Residuals, abs(Residuals) in a 2x2 subplot
+    fig, axs = plt.subplots(2, 2, figsize=(16, 16))
+
+    # General plotting configurations
+    title_fontsize = 24
+    cb_fontsize = 16
+    cb_shrink = 0.75
+    tick_label_fontsize = 16
+
+    # Ground Truth Image
+    im0 = axs[0,0].imshow(gt_img, cmap='gray', vmin=0, vmax=1)
+    axs[0,0].set_title("Ground Truth", fontsize=title_fontsize)
+    axs[0,0].tick_params(labelsize=tick_label_fontsize)
+    cb0 = fig.colorbar(im0, ax=axs[0,0], shrink=cb_shrink)
+    cb0.ax.tick_params(labelsize=cb_fontsize)
+    cb0.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+    # Prediction Image
+    im1 = axs[0,1].imshow(pred_img, cmap='gray', vmin=0, vmax=1)
+    axs[0,1].set_title("Prediction", fontsize=title_fontsize)
+    axs[0,1].tick_params(labelsize=tick_label_fontsize)
+    cb1 = fig.colorbar(im1, ax=axs[0,1], shrink=cb_shrink)
+    cb1.ax.tick_params(labelsize=cb_fontsize)
+    cb1.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+    # (Ground Truth - Prediction) Image
+    im2 = axs[1,0].imshow(gt_img - pred_img, cmap='gray', vmin=-1, vmax=1)
+    axs[1,0].set_title("Ground Truth - Prediction", fontsize=title_fontsize)
+    axs[1,0].tick_params(labelsize=tick_label_fontsize)
+    cb2 = fig.colorbar(im2, ax=axs[1,0], shrink=cb_shrink)
+    cb2.ax.tick_params(labelsize=cb_fontsize)
+    cb2.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+    # abs(Ground Truth - Prediction) Image
+    im3 = axs[1,1].imshow(np.abs(gt_img - pred_img), cmap='gray', vmin=0, vmax=1)
+    axs[1,1].set_title("abs(Ground Truth - Prediction)", fontsize=title_fontsize)
+    axs[1,1].tick_params(labelsize=tick_label_fontsize)
+    cb3 = fig.colorbar(im3, ax=axs[1,1], shrink=cb_shrink)
+    cb3.ax.tick_params(labelsize=cb_fontsize)
+    cb3.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+    # Save the figure
     plt.tight_layout()
     plt.savefig(save_path)
     plt.close(fig)
-    logger.info(f"Saved prediction results to {save_path}\n")
+    logger.info(f"Saved prediction results to: \n{save_path}\n")
 
 
 def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_sampler: NeighborSampler, evaluate_idx_data_loader: DataLoader, evaluate_data: Data, eval_stage: str,

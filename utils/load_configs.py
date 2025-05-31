@@ -46,6 +46,8 @@ def get_link_prediction_args(is_evaluation: bool = False):
     parser.add_argument('--num_epochs', type=int, default=100, help='number of epochs')
     parser.add_argument('--optimizer', type=str, default='Adam', choices=['SGD', 'Adam', 'RMSprop'], help='name of optimizer')
     parser.add_argument('--weight_decay', type=float, default=0.0, help='weight decay')
+    parser.add_argument('--l1_regularisation_lambda', type=float, default=0.0, help='L1 regularisation (Lasso) lambda hyperparameter')
+    parser.add_argument('--l2_regularisation_lambda', type=float, default=0.0, help='L2 regularisation (Ridge) lambda hyperparameter')
     parser.add_argument('--patience', type=int, default=10, help='patience for early stopping in terms of no. of epochs')
     parser.add_argument('--patience_threshold', type=int, default=0.005, help='patience for early stopping in terms of loss threshold, stop early if loss does not improve significantly enough e.g. by 0.005')
     parser.add_argument('--num_runs', type=int, default=5, help='number of runs')
