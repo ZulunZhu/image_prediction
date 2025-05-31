@@ -50,10 +50,20 @@ class MergeLayer(nn.Module):
         :param output_dim: int, dimension of the output
         """
         super().__init__()
-        self.fc1 = nn.Linear(input_dim1 + input_dim2, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, output_dim)
-        self.act = nn.ReLU()
+        self.fc1 = nn.Linear(input_dim1 + input_dim2, hidden_dim)   # Defaults: input_dim1 = 172, input_dim2 = 172, hidden_dim = 172
+        self.fc2 = nn.Linear(hidden_dim, output_dim)                # Defaults: hidden_dim = 172, output_dim = edge_raw_features.shape[1] = (num_edges + 1) due to vstack padding
+        self.act = nn.ReLU()           
 
+        # Sigmoid activation function with temperature scaling (y = 1 / (1 + e^(-x/temperature)))
+        # Default sigmoid temperature is set to 1
+        # If temperature is set to < 1, it will make the sigmoid function sharper
+        # If temperature is set to > 1, it will make the sigmoid function smoother
+        temperature = 1
+        self.final_act = lambda x: torch.sigmoid(x / temperature)
+
+        # self.final_act = nn.Sigmoid()   
+        # self.final_act = lambda x: torch.clamp(x, min=0.0, max=1.0)
+        
     def forward(self, input_1: torch.Tensor, input_2: torch.Tensor):
         """
         merge and project the inputs
@@ -64,7 +74,8 @@ class MergeLayer(nn.Module):
         # Tensor, shape (*, input_dim1 + input_dim2)
         x = torch.cat([input_1, input_2], dim=1)
         # Tensor, shape (*, output_dim)
-        h = self.fc2(self.act(self.fc1(x)))
+        # h = self.fc2(self.act(self.fc1(x)))
+        h = self.final_act(self.fc2(self.act(self.fc1(x))))
         return h
 
 
