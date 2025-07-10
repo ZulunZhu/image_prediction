@@ -44,8 +44,9 @@ if __name__ == "__main__":
     torch.set_printoptions(sci_mode=False, precision=5)
 
     # Input data
-    data_dir = "/aria/zulun_sharing/TEST_KZ_TGNN_sharing_20250214/merged/cors_ALL" # directory containing original image data
-    
+    # data_dir = "/aria/zulun_sharing/TEST_KZ_TGNN_sharing_20250214/merged/cors_ALL"   # directory containing original image data (uncropped from ISCE2)
+    data_dir = "/aria/tgnn_dpm5/usa_california_wildfires/P064/merged/cors"   # directory containing original image data (cropped to tight bounding box)
+
     # Set up main logger
     work_dir = os.getcwd()
     main_log_dir = os.path.join(work_dir, 'main_logs')
@@ -73,8 +74,13 @@ if __name__ == "__main__":
 
     # Get list bounding boxes for each patch
     sys.setrecursionlimit(100000)  # Increase recursion limit to avoid crashes
-    sub_dir = [d for d in os.listdir(data_dir) if d.startswith("cor_") and os.path.isdir(os.path.join(data_dir, d))]  # For getting image dimensions
-    y, x = sizeFromXml(os.path.join(data_dir, sub_dir[0], "b01_16r4alks.cor"))   # Get size of full image
+    sub_dir = [d for d in os.listdir(data_dir) if d.startswith("cor_") and os.path.isdir(os.path.join(data_dir, d))]  # List of cor_YYYYMMDD_YYYYMMDD subfolders for getting image dimensions
+    cor_files = [f for f in os.listdir(os.path.join(data_dir, sub_dir[0])) if f.endswith(".cor")]  # From first subfolder, get the cor files
+    if not sub_dir or not cor_files:
+        log_main.error("ERROR: There are no 'cor_YYYYMMDD_YYYYMMDD' subfolders or '.cor' files found in the data directory. The script will be terminated.")
+        sys.exit(1)
+    y, x = sizeFromXml(os.path.join(data_dir, sub_dir[0], cor_files[0]))   # Get size of full image from first cor file in the first cor_YYYYMMDD_YYYYMMDD subfolder
+    # y, x = sizeFromXml(os.path.join(data_dir, sub_dir[0], "b01_16r4alks.cor"))   # Get size of full image
     patchList = computePatches(x, y, args.patch_length, args.patch_overlap)   # Get list of bounding boxes for each patch
     log_main.info(f"\n"
                   f"Total image width (x-axis): {x}\n"
@@ -89,6 +95,10 @@ if __name__ == "__main__":
     ######### PATCH LOOP #########
     # Iterate over each image patch
     for patch_id, patch_bbox in enumerate(patchList):
+
+        # UNCOMMENT FOR DEBUGGING: Skip processing for certain patches. Only process selected patches in the list.
+        if patch_id+1 not in [8]:
+            continue
 
         # Create sub-directory for the patch
         patch_dir = os.path.join(work_dir,'patch_' + f"{patch_id+1:04d}")
@@ -113,7 +123,8 @@ if __name__ == "__main__":
         # Process dataset for the patch
         log_patch.info(f"\n********** PATCH {patch_id + 1:04d} **********\n")
         log_patch.info(f"Patch bbox: {patch_bbox}")
-        _, _, date_to_id, edge_node_pairs, node_mapping = prepareData(log_patch, data_dir, patch_dir, patch_bbox, base_filename='b01_16r4alks')
+        # _, _, date_to_id, edge_node_pairs, node_mapping = prepareData(log_patch, data_dir, patch_dir, patch_bbox, base_filename='b01_16r4alks', amp_normalise=args.amp_normalise, cor_logit_space=args.cor_logit_space)
+        _, _, date_to_id, edge_node_pairs, node_mapping = prepareData(log_patch, data_dir, patch_dir, patch_bbox, amp_norm=args.amp_norm, cor_logit=args.cor_logit)
 
         # Go into the patch directory
         os.chdir(patch_dir)
@@ -454,41 +465,47 @@ if __name__ == "__main__":
                                        f"abs(LOSS) Percentiles: \n"
                                        f"{[round(v, 5) for v in torch.quantile(residuals_full_object.abs().flatten(), torch.tensor([0.00, 0.01, 0.25, 0.5, 0.75, 0.99, 1.00], device = args.device)).tolist()]}\n")
 
-                        # # UNCOMMENT FOR DEBUGGING: to visualize interim training results (epoch 1)
-                        if train_window_idx[0] == 0 and epoch == 0:
-                            # Check the 1st edge in test data, raw version
-                            gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
-                            pred_img = predicted_edge_feature[0,].detach().cpu().numpy().reshape((args.patch_length,args.patch_length))
-                            save_path = os.path.join(patch_dir, f"train_ep-1_w-1_im0_raw.png")
-                            evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)
-                            # # Check the 1st edge in test data, clamp version
-                            # gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
-                            # pred_img = predicted_edge_feature[0,].detach().clamp(min=0.0, max=1.0).cpu().numpy().reshape((args.patch_length,args.patch_length))
-                            # save_path = os.path.join(patch_dir, f"train_ep-1_w-1_im0_clamp.png")
-                            # evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)
-                            # # Check the 1st edge in test data, sigmoid version
-                            # gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
-                            # pred_img = predicted_edge_feature[0,].detach().sigmoid().cpu().numpy().reshape((args.patch_length,args.patch_length))
-                            # save_path = os.path.join(patch_dir, f"train_ep-1_w-1_im0_sigmoid.png")
-                            # evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)
+                        # # # UNCOMMENT FOR DEBUGGING: to visualize interim training results (epoch 1)
+                        # if train_window_idx[0] == 0 and epoch == 0:
+
+                        #     # Check the 1st edge in test data, raw version
+                        #     gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
+                        #     pred_img = predicted_edge_feature[0,].detach().cpu().numpy().reshape((args.patch_length,args.patch_length))
+                        #     save_path = os.path.join(patch_dir, f"train_ep-1_w-1_im0.png")
+                        #     evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)
+
+                        #     # # Check the 1st edge in test data, clamp version
+                        #     # gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
+                        #     # pred_img = predicted_edge_feature[0,].detach().clamp(min=0.0, max=1.0).cpu().numpy().reshape((args.patch_length,args.patch_length))
+                        #     # save_path = os.path.join(patch_dir, f"train_ep-1_w-1_im0_clamp.png")
+                        #     # evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)
                         
-                        # # UNCOMMENT FOR DEBUGGING: to visualize interim training results (epoch 10)
-                        if train_window_idx[0] == 0 and epoch == 9:
-                            # Check the 1st edge in test data, raw version
-                            gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
-                            pred_img = predicted_edge_feature[0,].detach().cpu().numpy().reshape((args.patch_length,args.patch_length))
-                            save_path = os.path.join(patch_dir, f"train_ep-10_w-1_im0_raw.png")
-                            evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)
-                            # # Check the 1st edge in test data, clamp version
-                            # gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
-                            # pred_img = predicted_edge_feature[0,].detach().clamp(min=0.0, max=1.0).cpu().numpy().reshape((args.patch_length,args.patch_length))
-                            # save_path = os.path.join(patch_dir, f"train_ep-10_w-1_im0_clamp.png")
-                            # evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)
-                            # # Check the 1st edge in test data, sigmoid version
-                            # gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
-                            # pred_img = predicted_edge_feature[0,].detach().sigmoid().cpu().numpy().reshape((args.patch_length,args.patch_length))
-                            # save_path = os.path.join(patch_dir, f"train_ep-10_w-1_im0_sigmoid.png")
-                            # evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)    
+                        #     # # Check the 1st edge in test data, sigmoid version
+                        #     # gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
+                        #     # pred_img = predicted_edge_feature[0,].detach().sigmoid().cpu().numpy().reshape((args.patch_length,args.patch_length))
+                        #     # save_path = os.path.join(patch_dir, f"train_ep-1_w-1_im0_sigmoid.png")
+                        #     # evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)
+                        
+                        # # # UNCOMMENT FOR DEBUGGING: to visualize interim training results (epoch 10)
+                        # if train_window_idx[0] == 0 and epoch == 9:
+
+                        #     # Check the 1st edge in test data, raw version
+                        #     gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
+                        #     pred_img = predicted_edge_feature[0,].detach().cpu().numpy().reshape((args.patch_length,args.patch_length))
+                        #     save_path = os.path.join(patch_dir, f"train_ep-10_w-1_im0.png")
+                        #     evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)
+                        
+                        #     # # Check the 1st edge in test data, clamp version
+                        #     # gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
+                        #     # pred_img = predicted_edge_feature[0,].detach().clamp(min=0.0, max=1.0).cpu().numpy().reshape((args.patch_length,args.patch_length))
+                        #     # save_path = os.path.join(patch_dir, f"train_ep-10_w-1_im0_clamp.png")
+                        #     # evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)
+                        
+                        #     # # Check the 1st edge in test data, sigmoid version
+                        #     # gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
+                        #     # pred_img = predicted_edge_feature[0,].detach().sigmoid().cpu().numpy().reshape((args.patch_length,args.patch_length))
+                        #     # save_path = os.path.join(patch_dir, f"train_ep-10_w-1_im0_sigmoid.png")
+                        #     # evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)    
                         
                         # Compute the L1 loss (MAE) between the predicted edge feature and the ground truth edge feature
                         # Note that edge_raw_features shape is [total no. of edges in full dataset +1, no. of pixels in patch], 
@@ -504,12 +521,14 @@ if __name__ == "__main__":
                             l1_norm = sum(p.abs().sum() for p in model.parameters() if p.requires_grad)
                             train_loss += args.l1_regularisation_lambda * l1_norm
                             log_patch.info(f"[TRAINING] L1-REGULARISED LOSS (Lambda = {args.l1_regularisation_lambda}): {train_loss}\n")
+
                         # Apply L2 Regularisation (Ridge), if applicable
                         elif args.l1_regularisation_lambda == 0 and args.l2_regularisation_lambda != 0:
                             log_patch.info(f"[TRAINING] Conducting L2-Regularisation (Ridge) on the Loss Function")
                             l2_norm = sum(p.pow(2.0).sum() for p in model.parameters() if p.requires_grad)
                             train_loss += args.l2_regularisation_lambda * l2_norm
                             log_patch.info(f"[TRAINING] L2-REGULARISED LOSS (Lambda = {args.l2_regularisation_lambda}): {train_loss}\n")
+                            
                         # Apply Elastic Net Regularisation (L1 + L2 Regularisation), if applicable
                         elif args.l1_regularisation_lambda != 0 and args.l2_regularisation_lambda != 0:
                             log_patch.info(f"[TRAINING] Conducting Elastic Net Regularisation (L1 & L2 regularisation) on the Loss Function")
@@ -517,7 +536,8 @@ if __name__ == "__main__":
                             l2_norm = sum(p.pow(2.0).sum() for p in model.parameters() if p.requires_grad)
                             train_loss += (args.l1_regularisation_lambda * l1_norm.item()) + (args.l2_regularisation_lambda * l2_norm.item())
                             log_patch.info(f"[TRAINING] ELASTIC-NET-REGULARISED LOSS (L1-Lambda = {args.l1_regularisation_lambda}, L2-Lambda = {args.l2_regularisation_lambda}): {train_loss}\n")
-                         # If no regularisation takes place, retain the original loss function
+                        
+                        # If no regularisation takes place, retain the original loss function
                         else:
                             log_patch.info(f"[TRAINING] No regularisation was applied and the original loss function remains unchanged.\n")
 
@@ -558,7 +578,7 @@ if __name__ == "__main__":
                 ########## VALIDATION ##########
                 
                 log_patch.info(f"********** PATCH {patch_id + 1:04d} | RUN {run + 1} | EPOCH {epoch + 1} | VALIDATION **********")
-                if epoch == 9:
+                if epoch in range(0, 20):
                     # UNCOMMENT FOR DEBUGGING: Visualise the validation results
                     val_metrics = evaluate_image_link_prediction_without_dataloader(logger=log_patch,
                                                                                 model_name=args.model_name,

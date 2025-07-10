@@ -185,13 +185,50 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                 else:
                     save_distributions_name = os.path.join(image_distributions_folder, f"{eval_stage}_distributions")
                 
-                # Plot the distributions
+                # Plot the distributions for the "train / val" stages
+                # First, plot distributions of all edges collectively in the "train / val" stages
                 evaluate_image_link_prediction_plot_distributions(logger=logger,
                                                                   gt_img=gt_dist_flat,
                                                                   pred_img=pred_dist_flat,
                                                                   residuals_img=residuals_dist_flat,
                                                                   abs_residuals_img=abs_residuals_dist_flat,
                                                                   save_path=save_distributions_name+".png")
+                
+                # Next, plot distributions of each individual edge in the "train / val" stages
+                # Get the num_edges and relevant node and date information for each edge
+                num_edges = positive_probabilities.shape[0]
+
+                # Iterate through the individual edges
+                for i in range(num_edges):
+
+                    # Flatten the GT, Pred, Residuals, abs(Residuals) objects for each edge for distribution plotting
+                    gt_edge_dist_flat = edge_raw_features[edge_ids_array][i].flatten()
+                    pred_edge_dist_flat = positive_probabilities[i].flatten()
+                    residuals_edge_dist_flat = residuals_full_object[i].flatten()
+                    abs_residuals_edge_dist_flat = np.abs(residuals_full_object)[i].flatten()
+
+                    # Get dates from node and edge mappings
+                    edge_id = edge_ids_array[i]
+                    src_node_id, dst_node_id = edge_node_pairs[edge_id-1]
+                    src_date = node_mapping.loc[node_mapping['nodeID'] == src_node_id, 'date'].values[0]
+                    dst_date = node_mapping.loc[node_mapping['nodeID'] == dst_node_id, 'date'].values[0]
+                    src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
+                    dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
+
+                    # Get the relevant epoch that is being evaluated (mainly for validation stage).
+                    epoch = kwargs.get("epoch", None)
+                    if epoch != None:
+                        save_edge_distributions_name = os.path.join(image_distributions_folder, f"{eval_stage}_epoch-{epoch:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}_distributions")
+                    else:
+                        save_edge_distributions_name = os.path.join(image_distributions_folder, f"{eval_stage}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}_distributions")
+                    
+                    # Plot the distributions (individual edges in "train / val")
+                    evaluate_image_link_prediction_plot_distributions(logger=logger,
+                                                                      gt_img=gt_edge_dist_flat,
+                                                                      pred_img=pred_edge_dist_flat,
+                                                                      residuals_img=residuals_edge_dist_flat,
+                                                                      abs_residuals_img=abs_residuals_edge_dist_flat,
+                                                                      save_path=save_edge_distributions_name+".png")
 
             # Plot distributions for the "test_end" evaluation stage
             # For the "test_end" stage, we plot the distributions of (1) all edges collectively, and (2) each individual edge
@@ -265,7 +302,14 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                 dst_date = node_mapping.loc[node_mapping['nodeID'] == dst_node_id, 'date'].values[0]
                 src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
                 dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
-                save_name = os.path.join(result_folder, f"{eval_stage}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}") 
+
+                # # Get the relevant epoch that is being evaluated (mainly for validation stage). 
+                # # For test_end stage there is no epoch value. If no epochs specified, None is returned.
+                epoch = kwargs.get("epoch", None)
+                if epoch != None:
+                    save_name = os.path.join(result_folder, f"{eval_stage}_epoch-{epoch:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}") 
+                else:                    
+                    save_name = os.path.join(result_folder, f"{eval_stage}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}") 
                 
                 # Reshape ground truth and prediction into 2D
                 gt_2d = reshape_to_2d(gt_embeddings[i], H, W)
@@ -291,12 +335,14 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
             l1_norm = sum(p.abs().sum() for p in model.parameters() if p.requires_grad)
             loss += l1_regularisation_lambda * l1_norm.item()
             logger.info(f"[{eval_stage.upper()}] L1-REGULARISED LOSS (L1-Lambda = {l1_regularisation_lambda}): {loss}\n")
+
         # Apply L2 Regularisation (Ridge), if applicable
         elif l1_regularisation_lambda == 0 and l2_regularisation_lambda != 0:
             logger.info(f"[{eval_stage.upper()}] Conducting L2-Regularisation (Ridge) on the Loss Function")
             l2_norm = sum(p.pow(2.0).sum() for p in model.parameters() if p.requires_grad)
             loss += l2_regularisation_lambda * l2_norm.item()
             logger.info(f"[{eval_stage.upper()}] L2-REGULARISED LOSS (L2-Lambda = {l2_regularisation_lambda}): {loss}\n")
+
         # Apply Elastic Net Regularisation (L1 + L2 Regularisation), if applicable
         elif l1_regularisation_lambda != 0 and l2_regularisation_lambda != 0:
             logger.info(f"[{eval_stage.upper()}] Conducting Elastic Net Regularisation (L1 & L2 regularisation) on the Loss Function")
@@ -304,6 +350,7 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
             l2_norm = sum(p.pow(2.0).sum() for p in model.parameters() if p.requires_grad)
             loss += (l1_regularisation_lambda * l1_norm.item()) + (l2_regularisation_lambda * l2_norm.item())
             logger.info(f"[{eval_stage.upper()}] ELASTIC-NET-REGULARISED LOSS (L1-Lambda = {l1_regularisation_lambda}, L2-Lambda = {l2_regularisation_lambda}): {loss}\n")
+        
         # If no regularisation takes place, retain the original loss function
         else:
             logger.info(f"[{eval_stage.upper()}] No regularisation was applied and the original loss function remains unchanged.\n")

@@ -56,10 +56,10 @@ class MergeLayer(nn.Module):
 
         # Sigmoid activation function with temperature scaling (y = 1 / (1 + e^(-x/temperature)))
         # Default sigmoid temperature is set to 1
-        # If temperature is set to < 1, it will make the sigmoid function sharper
-        # If temperature is set to > 1, it will make the sigmoid function smoother
-        temperature = 1
-        self.final_act = lambda x: torch.sigmoid(x / temperature)
+        # If sigmoid temperature is set to < 1, it will make the sigmoid function steeper
+        # If sigmoid temperature is set to > 1, it will make the sigmoid function gentler
+        sigmoid_temperature = 1
+        self.final_act = lambda x: torch.sigmoid(x / sigmoid_temperature)
 
         # self.final_act = nn.Sigmoid()   
         # self.final_act = lambda x: torch.clamp(x, min=0.0, max=1.0)

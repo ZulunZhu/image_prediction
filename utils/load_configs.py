@@ -13,6 +13,8 @@ def get_link_prediction_args(is_evaluation: bool = False):
     parser = argparse.ArgumentParser('Interface for the link prediction task')
     parser.add_argument('--dataset_name', type=str, help='dataset to be used', default='tgbl-wiki',
                         choices=["tgbl-wiki", "tgbl-review", "tgbl-coin", "tgbl-comment", "tgbl-flight"])
+    parser.add_argument('--amp_norm', type=bool, default=True, help='Boolean flag to determine if raw amplitudes or normalised amplitudes should be used')
+    parser.add_argument('--cor_logit', type=bool, default=False, help='Boolean flag to determine if coherences should be converted to logit space')
     parser.add_argument('--patch_length', type=int, default=224, help='patch length')
     parser.add_argument('--patch_overlap', type=int, default=204, help='patch overlap')
     parser.add_argument('--temporal_window_width', type=int, default=120, help='temporal window width in number of days')
@@ -49,7 +51,7 @@ def get_link_prediction_args(is_evaluation: bool = False):
     parser.add_argument('--l1_regularisation_lambda', type=float, default=0.0, help='L1 regularisation (Lasso) lambda hyperparameter')
     parser.add_argument('--l2_regularisation_lambda', type=float, default=0.0, help='L2 regularisation (Ridge) lambda hyperparameter')
     parser.add_argument('--patience', type=int, default=10, help='patience for early stopping in terms of no. of epochs')
-    parser.add_argument('--patience_threshold', type=int, default=0.005, help='patience for early stopping in terms of loss threshold, stop early if loss does not improve significantly enough e.g. by 0.005')
+    parser.add_argument('--patience_threshold', type=float, default=0.005, help='patience for early stopping in terms of loss threshold, stop early if loss does not improve significantly enough e.g. by 0.005')
     parser.add_argument('--num_runs', type=int, default=5, help='number of runs')
     parser.add_argument('--test_interval_epochs', type=int, default=10, help='how many epochs to perform testing once')
     parser.add_argument('--load_best_configs', action='store_true', default=False, help='whether to load the best configurations')

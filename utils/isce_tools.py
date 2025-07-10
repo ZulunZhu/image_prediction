@@ -105,7 +105,8 @@ def computePatches(image_x, image_y, patch_length, patch_overlap):
     return patchList
 
 
-def prepareData(logger, data_in_dir, data_out_dir, bbox, base_filename='b01_16r4alks'):
+# def prepareData(logger, data_in_dir, data_out_dir, bbox, base_filename='b01_16r4alks', **kwargs):
+def prepareData(logger, data_in_dir, data_out_dir, bbox, **kwargs):
 
     # Create a directory "image_data" in the current folder to store outputs
     logger.info(f"\n\n\nPreparing data in {data_out_dir}...\n\n")
@@ -129,8 +130,24 @@ def prepareData(logger, data_in_dir, data_out_dir, bbox, base_filename='b01_16r4
             continue
         date1, date2 = parts[1], parts[2]
         folder_path = os.path.join(data_in_dir, folder)
-        amp_file = os.path.join(folder_path, base_filename + "_norm.amp")
-        cor_file = os.path.join(folder_path, base_filename + ".cor")
+
+        # Extract base_filename from files in the folder based on common name parts
+        base_filename = os.path.commonprefix([os.path.splitext(f)[0] for f in os.listdir(folder_path) if not f.startswith('.')])
+
+        # Read in the relevant amplitude files depending on whether normalisation is applied
+        amp_norm = kwargs.get("amp_norm", None)
+        if amp_norm == True:
+            amp_file = os.path.join(folder_path, base_filename + "_norm.amp")
+        else:
+            amp_file = os.path.join(folder_path, base_filename + ".amp")
+
+        # Read in the relevant coherence files depending on whether logit space is applied
+        cor_logit = kwargs.get("cor_logit", None)
+        if cor_logit == True:
+            cor_file = os.path.join(folder_path, base_filename + "_logit.cor")
+        else:
+            cor_file = os.path.join(folder_path, base_filename + ".cor")
+
         logger.info(f"\n"
                     f"Reading folder {folder} with dates {date1} and {date2}\n"
                     f"{amp_file}\n"
