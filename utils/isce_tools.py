@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
 
 def readAmp(file,bbox):
@@ -76,7 +77,7 @@ def sizeFromXml(file):
     return width, length   
 
 
-def computePatches(image_x, image_y, patch_length, patch_overlap):
+def computePatches(image_file, image_x, image_y, patch_length, patch_overlap):
     # Initialize the output patchList which will contain a list of patch bounding boxes in the form of [start_x, end_x, start_y, end_y]
     patchList = []
     # Compute step sizes
@@ -97,6 +98,17 @@ def computePatches(image_x, image_y, patch_length, patch_overlap):
     # Handle the bottom-right corner
     if (image_x - patch_length) % step_x != 0 and (image_y - patch_length) % step_y != 0:
         patchList.append([image_x - patch_length, image_x - 1, image_y - patch_length, image_y - 1])
+    # Read image
+    cor = readCor(image_file,[0, image_x-1, 0, image_y-1])
+    # Visualise the patches on the image
+    fig, ax = plt.subplots(figsize=(10, 12))
+    ax.imshow(cor, cmap='gray', vmin=0, vmax=1)
+    for patch in patchList:
+        start_x, end_x, start_y, end_y = patch
+        rect = patches.Rectangle((start_y, start_x), end_y-start_y+1, end_x-start_x+1, linewidth=1, edgecolor='r', facecolor='none')
+        ax.add_patch(rect)
+    plt.tight_layout()
+    plt.savefig("patches_length-{}_overlap-{}.png".format(patch_length, patch_overlap), dpi=300, bbox_inches='tight')
     # Checks
     # print("Total image width (x-axis): ", image_x)
     # print("Total image length (y-axis): ", image_y) 
@@ -187,6 +199,8 @@ def prepareData(logger, data_in_dir, data_out_dir, bbox, **kwargs):
 
     # Create a sorted list of unique dates and a mapping: date -> node ID (starting at 1)
     sorted_dates = sorted(date_to_feature.keys())
+    sorted_dates_dt = pd.to_datetime(sorted_dates)
+    sorted_dates_doy = sorted_dates_dt.dayofyear
     date_to_id = {date: idx+1 for idx, date in enumerate(sorted_dates)}
 
     # Build the node features array: each row is the flattened node feature for a node
@@ -197,14 +211,15 @@ def prepareData(logger, data_in_dir, data_out_dir, bbox, **kwargs):
     # Save the node mapping to a text file (each line: "nodeID date")
     mapping_file = os.path.join(save_dir, "node_mapping.txt")
     with open(mapping_file, "w") as f:
-        for date in sorted_dates:
-            f.write(f"{date_to_id[date]} {date}\n")
+        for idx, date in enumerate(sorted_dates):
+            f.write(f"{date_to_id[date]} {date} {sorted_dates_doy[idx]}\n")
     logger.info(f"Saved node mapping to {mapping_file}")
 
     # Save the node mapping to a dataframe
     node_mapping = pd.DataFrame({
         'nodeID': [date_to_id[date] for date in sorted_dates],
-        'date': sorted_dates
+        'date': sorted_dates,
+        'doy': sorted_dates_doy
     })
 
     # Save the node and edge features as NumPy arrays

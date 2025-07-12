@@ -2,27 +2,29 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import pandas as pd
 
 
 class TimeEncoder(nn.Module):
 
-    def __init__(self, time_dim: int, parameter_requires_grad: bool = True):
+    def __init__(self, time_dim: int):
+    # def __init__(self, time_dim: int, parameter_requires_grad: bool = True):
         """
         Time encoder.
         :param time_dim: int, dimension of time encodings
         :param parameter_requires_grad: boolean, whether the parameter in TimeEncoder needs gradient
         """
         super(TimeEncoder, self).__init__()
-
         self.time_dim = time_dim
+        
         # trainable parameters for time encoding
-        self.w = nn.Linear(1, time_dim)
-        self.w.weight = nn.Parameter((torch.from_numpy(1 / 10 ** np.linspace(0, 9, time_dim, dtype=np.float32))).reshape(time_dim, -1))
-        self.w.bias = nn.Parameter(torch.zeros(time_dim))
+        # self.w = nn.Linear(1, time_dim)
+        # self.w.weight = nn.Parameter((torch.from_numpy(1 / 10 ** np.linspace(0, 9, time_dim, dtype=np.float32))).reshape(time_dim, -1))
+        # self.w.bias = nn.Parameter(torch.zeros(time_dim))
 
-        if not parameter_requires_grad:
-            self.w.weight.requires_grad = False
-            self.w.bias.requires_grad = False
+        # if not parameter_requires_grad:
+        #     self.w.weight.requires_grad = False
+        #     self.w.bias.requires_grad = False
 
     def forward(self, timestamps: torch.Tensor):
         """
@@ -30,12 +32,29 @@ class TimeEncoder(nn.Module):
         :param timestamps: Tensor, shape (batch_size, seq_len)
         :return:
         """
-        # Tensor, shape (batch_size, seq_len, 1)
-        timestamps = timestamps.unsqueeze(dim=2)
+        # # Tensor, shape (batch_size, seq_len, 1)
+        # timestamps = timestamps.unsqueeze(dim=2)
 
-        # Tensor, shape (batch_size, seq_len, time_dim)
-        output = torch.cos(self.w(timestamps))
+        # # Tensor, shape (batch_size, seq_len, time_dim)
+        # output = torch.cos(self.w(timestamps))
+        
+        # # Get mapping from nodeID to day of year
+        # nodeID_to_doy = dict(zip(node_mapping['nodeID'], node_mapping['doy']))
+        
+        # Original timestamps tensor, shape (batch_size, seq_len, 1)
+        timestamps_cpu = timestamps.cpu().numpy()
+        timestamps_flat = timestamps_cpu.astype(int).reshape(-1)  
+        # doys_flat = np.vectorize(nodeID_to_doy.get)(timestamps_flat)  # Convert timestamps to day of year using node_mapping 
+        # doys_flat = np.where(doys_flat == None, 0, doys_flat).astype(int)  # Replace None with 0 and convert to int
 
+        # Encode timestamps using sine cosine encoding
+        # encoded = sincosEncoder(doys_flat, d=self.time_dim, n=10000)
+        encoded = sincosEncoder(timestamps_flat, d=self.time_dim, n=10000)
+        
+        # Encoded timestamps tensor, shape (batch_size, seq_len, time_dim)
+        output_np = encoded.reshape(*timestamps_cpu.shape, self.time_dim)
+        output = torch.tensor(output_np, dtype=torch.float32, device=timestamps.device)
+        
         return output
 
 
@@ -287,3 +306,17 @@ class TransformerEncoder(nn.Module):
         outputs = self.norm_layers[1](outputs + self.dropout(hidden_states))
 
         return outputs
+
+
+def sincosEncoder(dates, d, n=10000):
+    # dates: array-like, shape (n_samples,)
+    # d: int, dimension of the output encoding
+    # n: int, scaling factor for the encoding
+    P = np.zeros((len(dates), d))
+    for k, date in enumerate(dates):
+        for i in np.arange(int(d/2)):
+            denominator = np.power(n, 2*i/d)
+            P[k, 2*i] = np.sin(date/denominator)
+            P[k, 2*i+1] = np.cos(date/denominator)
+    return P
+ 

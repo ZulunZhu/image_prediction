@@ -293,9 +293,8 @@ def get_link_prediction_image_data_split_by_nodes(logger, dataset_name: str):
     save_dir = os.path.join(os.getcwd(), "image_data")
     node_raw_features = np.load(os.path.join(save_dir, "node_features.npy"))  # shape: (num_nodes, feat_dim)
     edge_raw_features = np.load(os.path.join(save_dir, "edge_features.npy"))  # shape: (num_edges, feat_dim)
-    # Load edge-node pairs; each line has "source<TAB>target"
-    edge_node_pairs = np.loadtxt(os.path.join(save_dir, "edge_node_pairs.txt"), delimiter="\t", dtype=np.int64)
-
+    edge_node_pairs = np.loadtxt(os.path.join(save_dir, "edge_node_pairs.txt"), delimiter="\t", dtype=np.int64)  # Load edge-node pairs; each line has "source<TAB>target"
+    
     # In our pre-generated data, we assume:
     #   - node IDs in edge_node_pairs are 0-indexed.
     #   - node_raw_features has shape (num_nodes, feat_dim) and edge_raw_features (num_edges, feat_dim)

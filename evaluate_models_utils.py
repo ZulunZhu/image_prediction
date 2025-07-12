@@ -129,12 +129,12 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
         else:
             raise ValueError(f"Wrong value for model_name {model_name}!")
 
-        # # Predict the positive probabilities
-        # # UNCOMMENT FOR DEBUGGING: Uncomment the following lines for edge predictions with different modification operations
-        # # When changing the following lines, we must also change the edge prediction lines in "image_link_prediction.py"
-        # # (1) predictions without modification operations 
-        # # (2) predictions with an external sigmoid operation (not recommended)
-        # # (3) predictions with an external clamp operation (not recommended)
+        # Predict the positive probabilities
+        # UNCOMMENT FOR DEBUGGING: Uncomment the following lines for edge predictions with different modification operations
+        # When changing the following lines, we must also change the edge prediction lines in "image_link_prediction.py"
+        # (1) predictions without modification operations 
+        # (2) predictions with an external sigmoid operation (not recommended)
+        # (3) predictions with an external clamp operation (not recommended)
         positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).cpu().numpy()
         # positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).sigmoid().cpu().numpy()
         # positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).clamp(min=0.0, max=1.0).cpu().numpy()
@@ -177,8 +177,8 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
             # Plot distributions for evaluation stages (except for "test_end")
             if eval_stage != "test_end":
 
-                # # Get the relevant epoch that is being evaluated (mainly for validation stage). 
-                # # For test_end stage there is no epoch value. If no epochs specified, None is returned.
+                # Get the relevant epoch that is being evaluated (mainly for validation stage) 
+                # For test_end stage there is no epoch value. If no epochs specified, None is returned
                 epoch = kwargs.get("epoch", None)
                 if epoch != None:
                     save_distributions_name = os.path.join(image_distributions_folder, f"{eval_stage}_epoch-{epoch:04d}_all-edges_distributions")
