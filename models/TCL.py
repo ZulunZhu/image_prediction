@@ -65,8 +65,11 @@ class TCL(nn.Module):
         :param num_neighbors: int, number of neighbors to sample for each node
         :return:
         """
-        
-        # GET FEATURES: ALL RECENT NEIGHBORS WITHIN THE BATCH, ORIGINAL TCL APPROACH
+        # GET FEATURES: There are 3 options below to get the features of the source and destination nodes
+        # (1) Recent node neighbors (backward only) + node itself, original TCL approach
+        # (2) All node neighbors (forward and backward) + node itself
+        # (3) No neighbors, node itself only
+        # GET FEATURES: (1) Recent node neighbors (backward only) + node itself, original TCL approach
         # # get temporal neighbors of source nodes, including neighbor ids, edge ids and time information
         # # src_neighbor_node_ids, ndarray, shape (batch_size, num_neighbors)
         # # src_neighbor_edge_ids, ndarray, shape (batch_size, num_neighbors)
@@ -140,8 +143,7 @@ class TCL(nn.Module):
         # dst_nodes_neighbor_time_features = self.projection_layer['time'](dst_nodes_neighbor_time_features)
         
         
-        
-        # GET FEATURES: ALL NEIGHBORS WITHIN THE BATCH
+        # GET FEATURES: (2) All node neighbors (forward and backward) + node itself
         # def find_common_edges(nodes, src_node_ids, dst_node_ids, num_neighbors):
         #     neighbors = np.empty((len(nodes), num_neighbors+1), dtype=object)
         #     for idx, node in enumerate(nodes):
@@ -176,7 +178,7 @@ class TCL(nn.Module):
         # dst_nodes_neighbor_time_features = self.projection_layer['time'](dst_nodes_neighbor_time_features)
         
         
-        # GET FEATURES: NO NEIGHBORS APPROACH
+        # GET FEATURES: (3) No neighbors, node itself only
         src_nodes_raw_features, src_nodes_time_features = self.get_features_no_neighbors(node_ids=src_node_ids, time_encoder=self.time_encoder)
         dst_nodes_raw_features, dst_nodes_time_features = self.get_features_no_neighbors(node_ids=dst_node_ids, time_encoder=self.time_encoder)
         
@@ -189,26 +191,32 @@ class TCL(nn.Module):
         dst_nodes_time_features = self.projection_layer['time'](dst_nodes_time_features)
 
 
+        # Concatenate features
         # Tensor, shape (batch_size, num_neighbors + 1, output_dim)
         # src_node_features = src_nodes_neighbor_node_raw_features + src_nodes_edge_raw_features + src_nodes_neighbor_time_features + src_nodes_neighbor_depth_features
+        # src_node_features = src_nodes_edge_raw_features + src_nodes_neighbor_time_features + src_nodes_neighbor_depth_features
         # Tensor, shape (batch_size, num_neighbors + 1, output_dim)
         # dst_node_features = dst_nodes_neighbor_node_raw_features + dst_nodes_edge_raw_features + dst_nodes_neighbor_time_features + dst_nodes_neighbor_depth_features
+        # dst_node_features = dst_nodes_edge_raw_features + dst_nodes_neighbor_time_features + dst_nodes_neighbor_depth_features
         # # Tensor, shape (batch_size, 1, output_dim)
+        # src_node_features = src_nodes_raw_features + src_nodes_time_features
         src_node_features = src_nodes_time_features
         src_neighbor_node_ids = np.expand_dims(src_node_ids, axis=1)
         # # Tensor, shape (batch_size, 1, output_dim)
+        # dst_node_features = dst_nodes_raw_features + dst_nodes_time_features
         dst_node_features = dst_nodes_time_features
         dst_neighbor_node_ids = np.expand_dims(dst_node_ids, axis=1)
 
+        # Run model
         for transformer in self.transformers:
-            # self-attention block
+            # Self-attention block
             # Tensor, shape (batch_size, num_neighbors + 1, output_dim)
             src_node_features = transformer(inputs_query=src_node_features, inputs_key=src_node_features,
                                             inputs_value=src_node_features, neighbor_masks=src_neighbor_node_ids)
             # Tensor, shape (batch_size, num_neighbors + 1, output_dim)
             dst_node_features = transformer(inputs_query=dst_node_features, inputs_key=dst_node_features,
                                             inputs_value=dst_node_features, neighbor_masks=dst_neighbor_node_ids)
-            # cross-attention block
+            # Cross-attention block
             # Tensor, shape (batch_size, num_neighbors + 1, output_dim)
             src_node_embeddings = transformer(inputs_query=src_node_features, inputs_key=dst_node_features,
                                               inputs_value=dst_node_features, neighbor_masks=dst_neighbor_node_ids)
@@ -218,7 +226,7 @@ class TCL(nn.Module):
 
             src_node_features, dst_node_features = src_node_embeddings, dst_node_embeddings
 
-        # retrieve the embedding of the corresponding target node, which is at the first position of the sequence
+        # Retrieve the embedding of the corresponding target node, which is at the first position of the sequence
         # Tensor, shape (batch_size, output_dim)
         src_node_embeddings = self.output_layer(src_node_embeddings[:, 0, :])
         # src_node_embeddings = self.output_layer(src_node_embeddings[:, 0, :]) + src_node_features # (optional: add the input to output to counter degradation problem)

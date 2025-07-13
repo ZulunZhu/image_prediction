@@ -2,7 +2,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import pandas as pd
 
 
 class TimeEncoder(nn.Module):
@@ -17,11 +16,10 @@ class TimeEncoder(nn.Module):
         super(TimeEncoder, self).__init__()
         self.time_dim = time_dim
         
-        # trainable parameters for time encoding
+        # Trainable parameters for time encoding
         # self.w = nn.Linear(1, time_dim)
         # self.w.weight = nn.Parameter((torch.from_numpy(1 / 10 ** np.linspace(0, 9, time_dim, dtype=np.float32))).reshape(time_dim, -1))
         # self.w.bias = nn.Parameter(torch.zeros(time_dim))
-
         # if not parameter_requires_grad:
         #     self.w.weight.requires_grad = False
         #     self.w.bias.requires_grad = False
@@ -32,27 +30,15 @@ class TimeEncoder(nn.Module):
         :param timestamps: Tensor, shape (batch_size, seq_len)
         :return:
         """
-        # # Tensor, shape (batch_size, seq_len, 1)
-        # timestamps = timestamps.unsqueeze(dim=2)
-
-        # # Tensor, shape (batch_size, seq_len, time_dim)
-        # output = torch.cos(self.w(timestamps))
-        
-        # # Get mapping from nodeID to day of year
-        # nodeID_to_doy = dict(zip(node_mapping['nodeID'], node_mapping['doy']))
-        
-        # Original timestamps tensor, shape (batch_size, seq_len, 1)
+        # Original timestamps
+        # Tensor, shape (batch_size, seq_len, 1)
         timestamps_cpu = timestamps.cpu().numpy()
-        timestamps_flat = timestamps_cpu.astype(int).reshape(-1)  
-        # doys_flat = np.vectorize(nodeID_to_doy.get)(timestamps_flat)  # Convert timestamps to day of year using node_mapping 
-        # doys_flat = np.where(doys_flat == None, 0, doys_flat).astype(int)  # Replace None with 0 and convert to int
-
-        # Encode timestamps using sine cosine encoding
-        # encoded = sincosEncoder(doys_flat, d=self.time_dim, n=10000)
-        encoded = sincosEncoder(timestamps_flat, d=self.time_dim, n=10000)
         
-        # Encoded timestamps tensor, shape (batch_size, seq_len, time_dim)
-        output_np = encoded.reshape(*timestamps_cpu.shape, self.time_dim)
+        # Encoded timestamps
+        # Tensor, shape (batch_size, seq_len, time_dim)
+        timestamps_flat = timestamps_cpu.astype(int).reshape(-1)  # Reshape into a flat array for encoding
+        encoded = sincosEncoder(timestamps_flat, d=self.time_dim, n=10000)  # Sine-cosine encoding
+        output_np = encoded.reshape(*timestamps_cpu.shape, self.time_dim)  # Reshape back to original and add required time dimension
         output = torch.tensor(output_np, dtype=torch.float32, device=timestamps.device)
         
         return output
@@ -69,9 +55,9 @@ class MergeLayer(nn.Module):
         :param output_dim: int, dimension of the output
         """
         super().__init__()
-        self.fc1 = nn.Linear(input_dim1 + input_dim2, hidden_dim)   # Defaults: input_dim1 = 172, input_dim2 = 172, hidden_dim = 172
-        self.fc2 = nn.Linear(hidden_dim, output_dim)                # Defaults: hidden_dim = 172, output_dim = edge_raw_features.shape[1] = (num_edges + 1) due to vstack padding
-        self.act = nn.ReLU()           
+        self.fc1 = nn.Linear(input_dim1 + input_dim2, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, output_dim)
+        self.act = nn.ReLU()
 
         # Sigmoid activation function with temperature scaling (y = 1 / (1 + e^(-x/temperature)))
         # Default sigmoid temperature is set to 1
@@ -92,9 +78,11 @@ class MergeLayer(nn.Module):
         """
         # Tensor, shape (*, input_dim1 + input_dim2)
         x = torch.cat([input_1, input_2], dim=1)
+        
         # Tensor, shape (*, output_dim)
-        # h = self.fc2(self.act(self.fc1(x)))
-        h = self.final_act(self.fc2(self.act(self.fc1(x))))
+        h = self.fc2(self.act(self.fc1(x)))
+        # h = self.final_act(self.fc2(self.act(self.fc1(x))))
+        
         return h
 
 

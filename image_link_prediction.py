@@ -24,7 +24,7 @@ from models.modules import MergeLayer
 from utils.isce_tools import sizeFromXml, computePatches, prepareData, stitchPatchMean, stitchPatchMedian
 from utils.utils import set_random_seed, convert_to_gpu, get_parameter_sizes, create_optimizer
 from utils.utils import get_neighbor_sampler, NegativeEdgeSampler
-from evaluate_models_utils import evaluate_model_link_prediction, evaluate_image_link_prediction_without_dataloader, evaluate_image_link_prediction_visualiser
+from evaluate_models_utils import evaluate_model_link_prediction, evaluate_image_link_prediction_without_dataloader, evaluate_image_link_prediction_visualiser, evaluate_image_link_prediction_plot_distributions
 from utils.DataLoader import get_idx_data_loader, get_link_prediction_tgb_data, get_link_prediction_image_data, \
 get_link_prediction_image_data_split_by_nodes, load_edge_node_pairs, get_sliding_window_data_loader
 from utils.temporal_shifting import find_furthest_node_within_temporal_baseline
@@ -121,7 +121,6 @@ if __name__ == "__main__":
         # Process dataset for the patch
         log_patch.info(f"\n********** PATCH {patch_id + 1:04d} **********\n")
         log_patch.info(f"Patch bbox: {patch_bbox}")
-        # _, _, date_to_id, edge_node_pairs, node_mapping = prepareData(log_patch, data_dir, patch_dir, patch_bbox, base_filename='b01_16r4alks', amp_normalise=args.amp_normalise, cor_logit_space=args.cor_logit_space)
         _, _, date_to_id, edge_node_pairs, node_mapping = prepareData(log_patch, data_dir, patch_dir, patch_bbox, amp_norm=args.amp_norm, cor_logit=args.cor_logit)
 
         # Go into the patch directory
@@ -493,7 +492,7 @@ if __name__ == "__main__":
                             
                         # UNCOMMENT FOR DEBUGGING: to visualize train results
                         # if epoch in [3,4,5,6,7,29] and train_window_idx[0] == 0:
-                        if epoch in [29]:
+                        if epoch in [9]:
                             os.makedirs(patch_dir + "/image_result", exist_ok=True)
                             for nbei, bei in enumerate(batch_edge_ids):
                                 # Get dates from node and edge mappings
@@ -502,13 +501,16 @@ if __name__ == "__main__":
                                 dst_date = node_mapping.loc[node_mapping['nodeID'] == dst_node_id, 'date'].values[0]
                                 src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
                                 dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
-                                save_name = os.path.join(patch_dir, f"image_result/train_ep-{epoch+1:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{bei:04d}_{src_date_str}-{dst_date_str}")
+                                save_name = os.path.join(patch_dir, f"image_result/train_epoch-{epoch+1:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{bei:04d}_{src_date_str}-{dst_date_str}")
                                 # Save and visualize results
-                                gt_img = edge_raw_features[bei,].reshape((args.patch_length,args.patch_length))
-                                pred_img = predicted_edge_feature[nbei,].detach().cpu().numpy().reshape((args.patch_length,args.patch_length))   
+                                gt_flat = edge_raw_features[bei,]
+                                gt_img = gt_flat.reshape((args.patch_length,args.patch_length))
+                                pred_flat = predicted_edge_feature[nbei,].detach().cpu().numpy()
+                                pred_img = pred_flat.reshape((args.patch_length,args.patch_length))
                                 np.save(save_name + "_gt.npy", gt_img)
                                 np.save(save_name + "_pred.npy", pred_img)
-                                evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_name+".png")
+                                evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_name+"_visual.png")
+                                evaluate_image_link_prediction_plot_distributions(log_patch,gt_flat,pred_flat,gt_flat-pred_flat,np.abs(gt_flat-pred_flat),save_name+"_distributions.png")
                         
                         # Append losses to the storage arrays
                         train_losses.append(train_loss.item())
@@ -548,11 +550,13 @@ if __name__ == "__main__":
                 
                 log_patch.info(f"********** PATCH {patch_id + 1:04d} | RUN {run + 1} | EPOCH {epoch + 1} | VALIDATION **********")
                 visualize_flag = False
+                distributions_all_flag = False
                 distributions_flag = False
                 
                 # UNCOMMENT FOR DEBUGGING: Visualise and plot distributions of the validation results
-                if epoch == 30:
+                if epoch in [9]:
                     visualize_flag = True
+                    distributions_all_flag = True
                     distributions_flag = True
                     
                 # Validate as per normal without visualizing
@@ -574,7 +578,8 @@ if __name__ == "__main__":
                                                                             l1_regularisation_lambda=args.l1_regularisation_lambda,
                                                                             l2_regularisation_lambda=args.l2_regularisation_lambda,
                                                                             visualize=visualize_flag,
-                                                                            plot_distributions=distributions_flag,
+                                                                            distributions_all=distributions_all_flag,
+                                                                            distributions=distributions_flag,
                                                                             epoch=epoch+1)
                     
                 if args.model_name in ['JODIE', 'DyRep', 'TGN']:
@@ -631,7 +636,9 @@ if __name__ == "__main__":
                                                                             l1_regularisation_lambda=args.l1_regularisation_lambda,
                                                                             l2_regularisation_lambda=args.l2_regularisation_lambda,
                                                                             visualize=True,
-                                                                            plot_distributions=True)
+                                                                            distributions_all=True,
+                                                                            distributions=True,
+                                                                            epoch=epoch+1)
 
             # exit(0)
             # store the evaluation metrics at the current run

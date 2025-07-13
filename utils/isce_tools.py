@@ -117,7 +117,6 @@ def computePatches(image_file, image_x, image_y, patch_length, patch_overlap):
     return patchList
 
 
-# def prepareData(logger, data_in_dir, data_out_dir, bbox, base_filename='b01_16r4alks', **kwargs):
 def prepareData(logger, data_in_dir, data_out_dir, bbox, **kwargs):
 
     # Create a directory "image_data" in the current folder to store outputs
