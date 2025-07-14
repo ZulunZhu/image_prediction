@@ -2,8 +2,10 @@ import logging
 import os
 import numpy as np
 import pandas as pd
+import re, glob
 import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
+import matplotlib.patches as patches
 
 
 def readAmp(file,bbox):
@@ -76,7 +78,7 @@ def sizeFromXml(file):
     return width, length   
 
 
-def computePatches(image_x, image_y, patch_length, patch_overlap):
+def computePatches(image_file, image_x, image_y, patch_length, patch_overlap):
     # Initialize the output patchList which will contain a list of patch bounding boxes in the form of [start_x, end_x, start_y, end_y]
     patchList = []
     # Compute step sizes
@@ -97,6 +99,17 @@ def computePatches(image_x, image_y, patch_length, patch_overlap):
     # Handle the bottom-right corner
     if (image_x - patch_length) % step_x != 0 and (image_y - patch_length) % step_y != 0:
         patchList.append([image_x - patch_length, image_x - 1, image_y - patch_length, image_y - 1])
+    # Read image
+    cor = readCor(image_file,[0, image_x-1, 0, image_y-1])
+    # Visualise the patches on the image
+    fig, ax = plt.subplots(figsize=(10, 12))
+    ax.imshow(cor, cmap='gray', vmin=0, vmax=1)
+    for patch in patchList:
+        start_x, end_x, start_y, end_y = patch
+        rect = patches.Rectangle((start_y, start_x), end_y-start_y+1, end_x-start_x+1, linewidth=1, edgecolor='r', facecolor='none')
+        ax.add_patch(rect)
+    plt.tight_layout()
+    plt.savefig("patches_length-{}_overlap-{}.png".format(patch_length, patch_overlap), dpi=300, bbox_inches='tight')
     # Checks
     # print("Total image width (x-axis): ", image_x)
     # print("Total image length (y-axis): ", image_y) 
@@ -105,7 +118,7 @@ def computePatches(image_x, image_y, patch_length, patch_overlap):
     return patchList
 
 
-def prepareData(logger, data_in_dir, data_out_dir, bbox, base_filename='b01_16r4alks'):
+def prepareData(logger, data_in_dir, data_out_dir, bbox, **kwargs):
 
     # Create a directory "image_data" in the current folder to store outputs
     logger.info(f"\n\n\nPreparing data in {data_out_dir}...\n\n")
@@ -129,8 +142,24 @@ def prepareData(logger, data_in_dir, data_out_dir, bbox, base_filename='b01_16r4
             continue
         date1, date2 = parts[1], parts[2]
         folder_path = os.path.join(data_in_dir, folder)
-        amp_file = os.path.join(folder_path, base_filename + "_norm.amp")
-        cor_file = os.path.join(folder_path, base_filename + ".cor")
+
+        # Extract base_filename from files in the folder based on common name parts
+        base_filename = os.path.commonprefix([os.path.splitext(f)[0] for f in os.listdir(folder_path) if not f.startswith('.')])
+
+        # Read in the relevant amplitude files depending on whether normalisation is applied
+        amp_norm = kwargs.get("amp_norm", None)
+        if amp_norm == True:
+            amp_file = os.path.join(folder_path, base_filename + "_norm.amp")
+        else:
+            amp_file = os.path.join(folder_path, base_filename + ".amp")
+
+        # Read in the relevant coherence files depending on whether logit space is applied
+        cor_logit = kwargs.get("cor_logit", None)
+        if cor_logit == True:
+            cor_file = os.path.join(folder_path, base_filename + "_logit.cor")
+        else:
+            cor_file = os.path.join(folder_path, base_filename + ".cor")
+
         logger.info(f"\n"
                     f"Reading folder {folder} with dates {date1} and {date2}\n"
                     f"{amp_file}\n"
@@ -170,6 +199,8 @@ def prepareData(logger, data_in_dir, data_out_dir, bbox, base_filename='b01_16r4
 
     # Create a sorted list of unique dates and a mapping: date -> node ID (starting at 1)
     sorted_dates = sorted(date_to_feature.keys())
+    sorted_dates_dt = pd.to_datetime(sorted_dates)
+    sorted_dates_doy = sorted_dates_dt.dayofyear
     date_to_id = {date: idx+1 for idx, date in enumerate(sorted_dates)}
 
     # Build the node features array: each row is the flattened node feature for a node
@@ -180,14 +211,15 @@ def prepareData(logger, data_in_dir, data_out_dir, bbox, base_filename='b01_16r4
     # Save the node mapping to a text file (each line: "nodeID date")
     mapping_file = os.path.join(save_dir, "node_mapping.txt")
     with open(mapping_file, "w") as f:
-        for date in sorted_dates:
-            f.write(f"{date_to_id[date]} {date}\n")
+        for idx, date in enumerate(sorted_dates):
+            f.write(f"{date_to_id[date]} {date} {sorted_dates_doy[idx]}\n")
     logger.info(f"Saved node mapping to {mapping_file}")
 
     # Save the node mapping to a dataframe
     node_mapping = pd.DataFrame({
         'nodeID': [date_to_id[date] for date in sorted_dates],
-        'date': sorted_dates
+        'date': sorted_dates,
+        'doy': sorted_dates_doy
     })
 
     # Save the node and edge features as NumPy arrays
@@ -218,6 +250,8 @@ def prepareData(logger, data_in_dir, data_out_dir, bbox, base_filename='b01_16r4
 
 
 def stitchPatchMean(logger, merged_dir, patch_file, patch_bbox, patch_length):
+    
+    # Deprecated function!
     
     # Patch file to stitch to the merged file
     patch = np.load(os.path.join("image_result",patch_file))   
@@ -285,7 +319,14 @@ def stitchPatchMedian(logger, merged_dir, patch_list, pred_file, x, y, chunk_siz
 
     # Initialise merged image if it doesn't exist
     logger.info(f"Starting merging (median) for {pred_file}...")
-    merged_img_file = os.path.join(merged_dir, pred_file.replace("pred", "pred_merged_img"))
+    
+    # Create filename for merged image
+    if "test_end_" in pred_file:  # Epochs will differ for test_end_ files
+        drop_epoch = re.sub(r'epoch-\d{4}_', '', pred_file)  
+        merged_img_file = os.path.join(merged_dir, drop_epoch.replace("pred", "pred_merged_img"))
+        pred_file_common = re.sub(r'epoch-\d{4}', 'epoch-*', pred_file)  # Glob string to search for common file in each patch folder
+    else:  # Epochs will be the same for train_ and val_ files since they are intentionally created at specific epochs
+        merged_img_file = os.path.join(merged_dir, pred_file.replace("pred", "pred_merged_img"))
     if not os.path.exists(merged_img_file):
         merged_img = np.full((x,y), np.nan, dtype=np.float64)
         np.save(merged_img_file, merged_img)
@@ -330,10 +371,20 @@ def stitchPatchMedian(logger, merged_dir, patch_list, pred_file, x, y, chunk_siz
 
         # Loop through each patch that overlaps with the chunk
         for idx, patch_id in enumerate(patch_to_chunks_id[chunk_id]):
-            patch_file = os.path.join("patch_"+f"{patch_id:04d}", "image_result", pred_file)
+            if "test_end_" in pred_file:  # Epochs will differ for test_end_ files
+                pattern = os.path.join("patch_"+f"{patch_id:05d}", "image_result", pred_file_common)
+                matched_files = glob.glob(pattern)
+                if len(matched_files) != 0:
+                    patch_file = matched_files[0]
+                else:
+                    logger.info(f"Patch file {pattern} not found and skipping.")
+                    continue
+            else:  # Epochs will be the same for train_ and val_ files since they are intentionally created at specific epochs
+                patch_file = os.path.join("patch_"+f"{patch_id:05d}", "image_result", pred_file)
 
             if os.path.exists(patch_file):
                 # Load data from patch file
+                logger.info(f"Patch file {patch_file} exists and is being stitched.")
                 patch_img = np.load(patch_file)
 
                 # Get the bounding box of the patch
@@ -355,7 +406,7 @@ def stitchPatchMedian(logger, merged_dir, patch_list, pred_file, x, y, chunk_siz
                 chunk_stack[ccx1:ccx2+1, ccy1:ccy2+1, idx] = patch_img[ppx1:ppx2+1, ppy1:ppy2+1]
             
             else:
-                logger.info(f"Patch file {patch_file} not found.")
+                logger.info(f"Patch file {patch_file} not found and skipping.")
 
         # Compute median of the 3D chunk array and output to the larger merged image
         merged_img[cx1:cx2+1, cy1:cy2+1] = np.nanmedian(chunk_stack, axis=2)
@@ -367,7 +418,7 @@ def stitchPatchMedian(logger, merged_dir, patch_list, pred_file, x, y, chunk_siz
      # Plot and save merged image once all chunks are processed
     plt.imshow(merged_img, cmap='gray', vmin=0, vmax=1)
     plt.colorbar()
-    save_path = os.path.join(merged_dir, pred_file[:-4].replace("pred", "pred_merged_img")+'.png')
+    save_path = os.path.join(merged_dir, merged_img_file[:-4]+'.png')
     plt.savefig(save_path)
     plt.close()
     logger.info(f"Saved merged image for {pred_file} to {save_path}")

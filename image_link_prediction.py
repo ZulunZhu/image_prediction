@@ -9,6 +9,7 @@ import warnings
 import shutil
 import json
 import math
+import re
 import torch
 import torch.nn as nn
 from sklearn.metrics import average_precision_score, roc_auc_score
@@ -24,7 +25,7 @@ from models.modules import MergeLayer
 from utils.isce_tools import sizeFromXml, computePatches, prepareData, stitchPatchMean, stitchPatchMedian
 from utils.utils import set_random_seed, convert_to_gpu, get_parameter_sizes, create_optimizer
 from utils.utils import get_neighbor_sampler, NegativeEdgeSampler
-from evaluate_models_utils import evaluate_model_link_prediction, evaluate_image_link_prediction_without_dataloader, evaluate_image_link_prediction_visualiser
+from evaluate_models_utils import evaluate_model_link_prediction, evaluate_image_link_prediction_without_dataloader, evaluate_image_link_prediction_visualiser, evaluate_image_link_prediction_plot_distributions
 from utils.DataLoader import get_idx_data_loader, get_link_prediction_tgb_data, get_link_prediction_image_data, \
 get_link_prediction_image_data_split_by_nodes, load_edge_node_pairs, get_sliding_window_data_loader
 from utils.temporal_shifting import find_furthest_node_within_temporal_baseline
@@ -42,10 +43,14 @@ if __name__ == "__main__":
 
     # Set PyTorch print options
     torch.set_printoptions(sci_mode=False, precision=5)
+    
+    # Increase recursion limit to avoid crashes
+    sys.setrecursionlimit(100000)  
 
     # Input data
-    data_dir = "/aria/zulun_sharing/TEST_KZ_TGNN_sharing_20250214/merged/cors_ALL" # directory containing original image data
-    
+    # data_dir = "/aria/zulun_sharing/TEST_KZ_TGNN_sharing_20250214/merged/cors_ALL"  # Directory containing original image data (uncropped from ISCE2)
+    data_dir = "/aria/tgnn_dpm5/usa_california_wildfires/P064/merged/cors"  # Directory containing original image data (cropped to tight bounding box)
+
     # Set up main logger
     work_dir = os.getcwd()
     main_log_dir = os.path.join(work_dir, 'main_logs')
@@ -72,10 +77,14 @@ if __name__ == "__main__":
     start_time_main = time.time()
 
     # Get list bounding boxes for each patch
-    sys.setrecursionlimit(100000)  # Increase recursion limit to avoid crashes
-    sub_dir = [d for d in os.listdir(data_dir) if d.startswith("cor_") and os.path.isdir(os.path.join(data_dir, d))]  # For getting image dimensions
-    y, x = sizeFromXml(os.path.join(data_dir, sub_dir[0], "b01_16r4alks.cor"))   # Get size of full image
-    patchList = computePatches(x, y, args.patch_length, args.patch_overlap)   # Get list of bounding boxes for each patch
+    sub_dirs = [d for d in os.listdir(data_dir) if d.startswith("cor_") and os.path.isdir(os.path.join(data_dir, d))]  # Get list of all cor_YYYYMMDD_YYYYMMDD subfolders
+    cor_files = [f for f in os.listdir(os.path.join(data_dir, sub_dirs[0])) if f.endswith(".cor")]  # Get list of all .cor files from the first cor_YYYYMMDD_YYYYMMDD subfolder
+    if not sub_dirs or not cor_files:
+        log_main.error("ERROR: There are no 'cor_YYYYMMDD_YYYYMMDD' subfolders or '.cor' files found in the data directory. The script will be terminated.")
+        sys.exit(1)
+    ref_img = os.path.join(data_dir, sub_dirs[0], cor_files[0])  # Use first file in first cor_YYYYMMDD_YYYYMMDD subfolder as reference image for patch splitting
+    y, x = sizeFromXml(ref_img)  # Get size of full image    
+    patchList = computePatches(ref_img, x, y, args.patch_length, args.patch_overlap)   # Get list of bounding boxes for each patch
     log_main.info(f"\n"
                   f"Total image width (x-axis): {x}\n"
                   f"Total image height (y-axis): {y}\n"
@@ -89,9 +98,16 @@ if __name__ == "__main__":
     ######### PATCH LOOP #########
     # Iterate over each image patch
     for patch_id, patch_bbox in enumerate(patchList):
-
+        
+        # Debugging: run the patch only if it overlaps with the target area
+        # x1, x2, y1, y2 = patch_bbox
+        # target_x1, target_x2 = 650, 850
+        # target_y1, target_y2 = 20, 220
+        # if (x2 < target_x1 or x1 > target_x2 or y2 < target_y1 or y1 > target_y2):
+        #     continue
+        
         # Create sub-directory for the patch
-        patch_dir = os.path.join(work_dir,'patch_' + f"{patch_id+1:04d}")
+        patch_dir = os.path.join(work_dir,'patch_' + f"{patch_id+1:05d}")
         os.makedirs(patch_dir, exist_ok=True)
         
         # Set up logger for this patch 
@@ -111,9 +127,9 @@ if __name__ == "__main__":
         log_patch.addHandler(ch)
 
         # Process dataset for the patch
-        log_patch.info(f"\n********** PATCH {patch_id + 1:04d} **********\n")
+        log_patch.info(f"\n********** PATCH {patch_id + 1:05d} **********\n")
         log_patch.info(f"Patch bbox: {patch_bbox}")
-        _, _, date_to_id, edge_node_pairs, node_mapping = prepareData(log_patch, data_dir, patch_dir, patch_bbox, base_filename='b01_16r4alks')
+        _, _, date_to_id, edge_node_pairs, node_mapping = prepareData(log_patch, data_dir, patch_dir, patch_bbox, amp_norm=args.amp_norm, cor_logit=args.cor_logit)
 
         # Go into the patch directory
         os.chdir(patch_dir)
@@ -122,6 +138,7 @@ if __name__ == "__main__":
         node_raw_features, edge_raw_features, full_data, train_data, val_data, test_data, eval_neg_edge_sampler, eval_metric_name = \
             get_link_prediction_image_data_split_by_nodes(log_patch, dataset_name=args.dataset_name)
 
+        # The neighbor sampler lists for each node: all the other nodes that it interacts with regardless of backward or forward direction, and the edge and time at which the interaction occurs
         # Initialize training neighbor sampler to retrieve temporal graph
         train_neighbor_sampler = get_neighbor_sampler(data=train_data, sample_neighbor_strategy=args.sample_neighbor_strategy,
                                                     time_scaling_factor=args.time_scaling_factor, seed=0)
@@ -184,7 +201,7 @@ if __name__ == "__main__":
             # Start the timer for the run
             run_start_time = time.time()
 
-            log_patch.info(f"********** PATCH {patch_id + 1:04d} | RUN {run + 1} **********\n")
+            log_patch.info(f"********** PATCH {patch_id + 1:05d} | RUN {run + 1} **********\n")
             log_patch.info(f"CONFIGURATION: {args}\n")
             
             # Create model
@@ -250,7 +267,7 @@ if __name__ == "__main__":
             for epoch in range(args.num_epochs):
 
                 log_patch.info(f"TRAINING with {args.num_epochs} epochs...")
-                log_patch.info(f"********** PATCH {patch_id + 1:04d} | RUN {run + 1} | EPOCH {epoch + 1} **********\n")
+                log_patch.info(f"********** PATCH {patch_id + 1:05d} | RUN {run + 1} | EPOCH {epoch + 1} **********\n")
 
                 # Set model to training mode
                 model.train()
@@ -279,7 +296,7 @@ if __name__ == "__main__":
                 # Iterating through the training windows with a stride of 1 per iteration (default)
                 for train_window_idx in enumerate(range(train_data_src_node_start, train_data_dst_node_end + 1, args.temporal_window_stride)):
                     
-                    log_patch.info(f"********** PATCH {patch_id + 1:04d} | RUN {run + 1} | EPOCH {epoch + 1} | TRAINING WINDOW {train_window_idx[0] + 1} **********")
+                    log_patch.info(f"********** PATCH {patch_id + 1:05d} | RUN {run + 1} | EPOCH {epoch + 1} | TRAINING WINDOW {train_window_idx[0] + 1} **********")
 
                     # Get the start and end of the src and dst nodes of the temporal window in the specified iteration
                     train_window_src_node_start = train_data_src_node_start + train_window_idx[0]
@@ -341,36 +358,23 @@ if __name__ == "__main__":
                         # We need to compute for positive and negative edges respectively, because the new sampling strategy (for evaluation) allows the negative source nodes to be
                         # different from the source nodes, this is different from previous works that just replace destination nodes with negative destination nodes
                         if args.model_name in ['TGAT', 'CAWN', 'TCL']:
-                            # get temporal embedding of source and destination nodes
-                            # two Tensors, with shape (batch_size, output_dim)
+                            # Get temporal embedding of source and destination nodes: 2 tensors, with shape (batch_size, output_dim)
                             batch_src_node_embeddings, batch_dst_node_embeddings = \
                                 model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_src_node_ids,
                                                                                 dst_node_ids=batch_dst_node_ids,
                                                                                 node_interact_times=batch_node_interact_times,
                                                                                 num_neighbors=args.num_neighbors)
-
-                            # get temporal embedding of negative source and negative destination nodes
-                            # two Tensors, with shape (batch_size, output_dim)
+                            # Get temporal embedding of source and destination nodes: 2 tensors, with shape (batch_size, output_dim)
                             # batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
                             #     model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
                             #                                                       dst_node_ids=batch_neg_dst_node_ids,
                             #                                                       node_interact_times=batch_node_interact_times,
                             #                                                       num_neighbors=args.num_neighbors)
+                            
                         elif args.model_name in ['JODIE', 'DyRep', 'TGN']:
-                            # note that negative nodes do not change the memories while the positive nodes change the memories,
+                            # Note that negative nodes do not change the memories while the positive nodes change the memories,
                             # we need to first compute the embeddings of negative nodes for memory-based models
-                            # get temporal embedding of negative source and negative destination nodes
-                            # two Tensors, with shape (batch_size, output_dim)
-                            # batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
-                            #     model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
-                            #                                                       dst_node_ids=batch_neg_dst_node_ids,
-                            #                                                       node_interact_times=batch_node_interact_times,
-                            #                                                       edge_ids=None,
-                            #                                                       edges_are_positive=False,
-                            #                                                       num_neighbors=args.num_neighbors)
-
-                            # get temporal embedding of source and destination nodes
-                            # two Tensors, with shape (batch_size, output_dim)
+                            # Get temporal embedding of source and destination nodes: 2 tensors, with shape (batch_size, output_dim)
                             batch_src_node_embeddings, batch_dst_node_embeddings = \
                                 model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_src_node_ids,
                                                                                 dst_node_ids=batch_dst_node_ids,
@@ -378,56 +382,61 @@ if __name__ == "__main__":
                                                                                 edge_ids=batch_edge_ids,
                                                                                 edges_are_positive=True,
                                                                                 num_neighbors=args.num_neighbors)
+                            # Get temporal embedding of source and destination nodes: 2 tensors, with shape (batch_size, output_dim)
+                            # batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
+                            #     model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
+                            #                                                       dst_node_ids=batch_neg_dst_node_ids,
+                            #                                                       node_interact_times=batch_node_interact_times,
+                            #                                                       edge_ids=None,
+                            #                                                       edges_are_positive=False,
+                            #                                                       num_neighbors=args.num_neighbors)
+                            
                         elif args.model_name in ['GraphMixer']:
-                            # get temporal embedding of source and destination nodes
-                            # two Tensors, with shape (batch_size, output_dim)
+                            # Get temporal embedding of source and destination nodes: 2 tensors, with shape (batch_size, output_dim)
                             batch_src_node_embeddings, batch_dst_node_embeddings = \
                                 model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_src_node_ids,
                                                                                 dst_node_ids=batch_dst_node_ids,
                                                                                 node_interact_times=batch_node_interact_times,
                                                                                 num_neighbors=args.num_neighbors,
                                                                                 time_gap=args.time_gap)
-
-                            # get temporal embedding of negative source and negative destination nodes
-                            # # two Tensors, with shape (batch_size, output_dim)
+                            # Get temporal embedding of source and destination nodes: 2 tensors, with shape (batch_size, output_dim)
                             # batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
                             #     model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
                             #                                                       dst_node_ids=batch_neg_dst_node_ids,
                             #                                                       node_interact_times=batch_node_interact_times,
                             #                                                       num_neighbors=args.num_neighbors,
                             #                                                       time_gap=args.time_gap)
+                            
                         elif args.model_name in ['DyGFormer']:
-                            # get temporal embedding of source and destination nodes
-                            # two Tensors, with shape (batch_size, output_dim)
+                            # Get temporal embedding of source and destination nodes: 2 tensors, with shape (batch_size, output_dim)
                             batch_src_node_embeddings, batch_dst_node_embeddings = \
                                 model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_src_node_ids,
                                                                                 dst_node_ids=batch_dst_node_ids,
                                                                                 node_interact_times=batch_node_interact_times)
-
-                            # get temporal embedding of negative source and negative destination nodes
-                            # two Tensors, with shape (batch_size, output_dim)
+                            # Get temporal embedding of source and destination nodes: 2 tensors, with shape (batch_size, output_dim)
                             # batch_neg_src_node_embeddings, batch_neg_dst_node_embeddings = \
                             #     model[0].compute_src_dst_node_temporal_embeddings(src_node_ids=batch_neg_src_node_ids,
                             #                                                       dst_node_ids=batch_neg_dst_node_ids,
                             #                                                       node_interact_times=batch_node_interact_times)
+                            
                         else:
                             raise ValueError(f"Wrong value for model_name {args.model_name}!")
                         
-                        # get positive and negative probabilities, shape (batch_size, )
-                        # positive_probabilities = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings).squeeze(dim=-1).sigmoid()
-                        # negative_probabilities = model[1](input_1=batch_neg_src_node_embeddings, input_2=batch_neg_dst_node_embeddings).squeeze(dim=-1).sigmoid()
+                        # Get positive and negative probabilities, shape (batch_size, )
+                        # positive_probabilities = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings).squeeze(dim=-1)
+                        # negative_probabilities = model[1](input_1=batch_neg_src_node_embeddings, input_2=batch_neg_dst_node_embeddings).squeeze(dim=-1)
 
                         # predicts = torch.cat([positive_probabilities, negative_probabilities], dim=0)
                         # labels = torch.cat([torch.ones_like(positive_probabilities), torch.zeros_like(negative_probabilities)], dim=0)
 
                         # loss = loss_func(input=predicts, target=labels)
                         
-                        # # Predict the edge features
-                        # # UNCOMMENT FOR DEBUGGING: Uncomment the following lines for edge predictions with different modification operations
-                        # # When changing the following lines, we must also change the edge prediction lines in "evaluate_models_utils.py"
-                        # # (1) predictions without modification operations 
-                        # # (2) predictions with an external sigmoid operation (not recommended)
-                        # # (3) predictions with an external clamp operation (not recommended)
+                        # Predict the edge features
+                        # UNCOMMENT FOR DEBUGGING: Uncomment the following lines for edge predictions with different modification operations
+                        # When changing the following lines, we must also change the edge prediction lines in "evaluate_models_utils.py"
+                        # (1) predictions without modification operations 
+                        # (2) predictions with an external sigmoid operation (not recommended)
+                        # (3) predictions with an external clamp operation (not recommended)
                         predicted_edge_feature = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings)
                         # predicted_edge_feature = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings).sigmoid()
                         # predicted_edge_feature = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings).clamp(min=0.0, max=1.0)
@@ -442,53 +451,18 @@ if __name__ == "__main__":
                         log_patch.info(f"[TRAINING] abs(GROUND TRUTH - PREDICTION) (Dimensions: {residuals_full_object.abs().shape}): \n{residuals_full_object.abs()}\n")
 
                         # Log the training result statistics
+                        quantiles = torch.tensor([0.00, 0.01, 0.25, 0.5, 0.75, 0.99, 1.00], device=args.device)
                         log_patch.info(f"\n"
                                        f"[TRAINING] STATISTICS\n"
                                        f"[ MIN | 1st | 25th | 50th | 75th | 99th | MAX ]\n"
                                        f"GROUND TRUTH Percentiles: \n"
-                                       f"{[round(v, 5) for v in torch.quantile(torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device).flatten(), torch.tensor([0.00, 0.01, 0.25, 0.5, 0.75, 0.99, 1.00], device = args.device)).tolist()]}\n"
+                                       f"{[round(v, 5) for v in torch.quantile(torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device).flatten(), quantiles).tolist()]}\n"
                                        f"PREDICTION Percentiles: \n"
-                                       f"{[round(v, 5) for v in torch.quantile(predicted_edge_feature.flatten(), torch.tensor([0.00, 0.01, 0.25, 0.5, 0.75, 0.99, 1.00], device = args.device)).tolist()]}\n"
+                                       f"{[round(v, 5) for v in torch.quantile(predicted_edge_feature.flatten(), quantiles).tolist()]}\n"
                                        f"LOSS Percentiles: \n"
-                                       f"{[round(v, 5) for v in torch.quantile(residuals_full_object.flatten(), torch.tensor([0.00, 0.01, 0.25, 0.5, 0.75, 0.99, 1.00], device = args.device)).tolist()]}\n"
+                                       f"{[round(v, 5) for v in torch.quantile(residuals_full_object.flatten(), quantiles).tolist()]}\n"
                                        f"abs(LOSS) Percentiles: \n"
-                                       f"{[round(v, 5) for v in torch.quantile(residuals_full_object.abs().flatten(), torch.tensor([0.00, 0.01, 0.25, 0.5, 0.75, 0.99, 1.00], device = args.device)).tolist()]}\n")
-
-                        # # UNCOMMENT FOR DEBUGGING: to visualize interim training results (epoch 1)
-                        if train_window_idx[0] == 0 and epoch == 0:
-                            # Check the 1st edge in test data, raw version
-                            gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
-                            pred_img = predicted_edge_feature[0,].detach().cpu().numpy().reshape((args.patch_length,args.patch_length))
-                            save_path = os.path.join(patch_dir, f"train_ep-1_w-1_im0_raw.png")
-                            evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)
-                            # # Check the 1st edge in test data, clamp version
-                            # gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
-                            # pred_img = predicted_edge_feature[0,].detach().clamp(min=0.0, max=1.0).cpu().numpy().reshape((args.patch_length,args.patch_length))
-                            # save_path = os.path.join(patch_dir, f"train_ep-1_w-1_im0_clamp.png")
-                            # evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)
-                            # # Check the 1st edge in test data, sigmoid version
-                            # gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
-                            # pred_img = predicted_edge_feature[0,].detach().sigmoid().cpu().numpy().reshape((args.patch_length,args.patch_length))
-                            # save_path = os.path.join(patch_dir, f"train_ep-1_w-1_im0_sigmoid.png")
-                            # evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)
-                        
-                        # # UNCOMMENT FOR DEBUGGING: to visualize interim training results (epoch 10)
-                        if train_window_idx[0] == 0 and epoch == 9:
-                            # Check the 1st edge in test data, raw version
-                            gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
-                            pred_img = predicted_edge_feature[0,].detach().cpu().numpy().reshape((args.patch_length,args.patch_length))
-                            save_path = os.path.join(patch_dir, f"train_ep-10_w-1_im0_raw.png")
-                            evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)
-                            # # Check the 1st edge in test data, clamp version
-                            # gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
-                            # pred_img = predicted_edge_feature[0,].detach().clamp(min=0.0, max=1.0).cpu().numpy().reshape((args.patch_length,args.patch_length))
-                            # save_path = os.path.join(patch_dir, f"train_ep-10_w-1_im0_clamp.png")
-                            # evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)
-                            # # Check the 1st edge in test data, sigmoid version
-                            # gt_img = edge_raw_features[train_data_indices + 1][0,].reshape((args.patch_length,args.patch_length))
-                            # pred_img = predicted_edge_feature[0,].detach().sigmoid().cpu().numpy().reshape((args.patch_length,args.patch_length))
-                            # save_path = os.path.join(patch_dir, f"train_ep-10_w-1_im0_sigmoid.png")
-                            # evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_path)    
+                                       f"{[round(v, 5) for v in torch.quantile(residuals_full_object.abs().flatten(), quantiles).tolist()]}\n")
                         
                         # Compute the L1 loss (MAE) between the predicted edge feature and the ground truth edge feature
                         # Note that edge_raw_features shape is [total no. of edges in full dataset +1, no. of pixels in patch], 
@@ -504,12 +478,14 @@ if __name__ == "__main__":
                             l1_norm = sum(p.abs().sum() for p in model.parameters() if p.requires_grad)
                             train_loss += args.l1_regularisation_lambda * l1_norm
                             log_patch.info(f"[TRAINING] L1-REGULARISED LOSS (Lambda = {args.l1_regularisation_lambda}): {train_loss}\n")
+
                         # Apply L2 Regularisation (Ridge), if applicable
                         elif args.l1_regularisation_lambda == 0 and args.l2_regularisation_lambda != 0:
                             log_patch.info(f"[TRAINING] Conducting L2-Regularisation (Ridge) on the Loss Function")
                             l2_norm = sum(p.pow(2.0).sum() for p in model.parameters() if p.requires_grad)
                             train_loss += args.l2_regularisation_lambda * l2_norm
                             log_patch.info(f"[TRAINING] L2-REGULARISED LOSS (Lambda = {args.l2_regularisation_lambda}): {train_loss}\n")
+                            
                         # Apply Elastic Net Regularisation (L1 + L2 Regularisation), if applicable
                         elif args.l1_regularisation_lambda != 0 and args.l2_regularisation_lambda != 0:
                             log_patch.info(f"[TRAINING] Conducting Elastic Net Regularisation (L1 & L2 regularisation) on the Loss Function")
@@ -517,16 +493,40 @@ if __name__ == "__main__":
                             l2_norm = sum(p.pow(2.0).sum() for p in model.parameters() if p.requires_grad)
                             train_loss += (args.l1_regularisation_lambda * l1_norm.item()) + (args.l2_regularisation_lambda * l2_norm.item())
                             log_patch.info(f"[TRAINING] ELASTIC-NET-REGULARISED LOSS (L1-Lambda = {args.l1_regularisation_lambda}, L2-Lambda = {args.l2_regularisation_lambda}): {train_loss}\n")
-                         # If no regularisation takes place, retain the original loss function
+                            
+                        # If no regularisation takes place, retain the original loss function
                         else:
                             log_patch.info(f"[TRAINING] No regularisation was applied and the original loss function remains unchanged.\n")
-
+                            
+                        # UNCOMMENT FOR DEBUGGING: to visualize train results
+                        # if epoch in [3,4,5,6,7,29] and train_window_idx[0] == 0:
+                        if epoch in [19]:
+                            os.makedirs(patch_dir + "/image_result", exist_ok=True)
+                            for nbei, bei in enumerate(batch_edge_ids):
+                                # Get dates from node and edge mappings
+                                src_node_id, dst_node_id = edge_node_pairs[bei-1]
+                                src_date = node_mapping.loc[node_mapping['nodeID'] == src_node_id, 'date'].values[0]
+                                dst_date = node_mapping.loc[node_mapping['nodeID'] == dst_node_id, 'date'].values[0]
+                                src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
+                                dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
+                                save_name = os.path.join(patch_dir, f"image_result/train_epoch-{epoch+1:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{bei:04d}_{src_date_str}-{dst_date_str}")
+                                # Save results
+                                gt_flat = edge_raw_features[bei,]
+                                gt_img = gt_flat.reshape((args.patch_length,args.patch_length))
+                                pred_flat = predicted_edge_feature[nbei,].detach().cpu().numpy()
+                                pred_img = pred_flat.reshape((args.patch_length,args.patch_length))
+                                np.save(save_name + "_gt.npy", gt_img)
+                                np.save(save_name + "_pred.npy", pred_img)
+                                # Visualise and plot distributions of results
+                                evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_name+"_visual.png")
+                                evaluate_image_link_prediction_plot_distributions(log_patch,gt_flat,pred_flat,gt_flat-pred_flat,np.abs(gt_flat-pred_flat),save_name+"_distributions.png")
+                        
                         # Append losses to the storage arrays
                         train_losses.append(train_loss.item())
                         train_metrics.append({'Training MAE loss': train_loss.item()})
 
                         # Logging training loss for the specified training window
-                        log_patch.info(f"TRAINING LOSS FOR PATCH {patch_id + 1:04d}, RUN {run + 1}, EPOCH {epoch + 1}, TRAINING WINDOW {train_window_idx[0] + 1}: {train_loss.item()}\n")
+                        log_patch.info(f"TRAINING LOSS FOR PATCH {patch_id + 1:05d}, RUN {run + 1}, EPOCH {epoch + 1}, TRAINING WINDOW {train_window_idx[0] + 1}: {train_loss.item()}\n")
 
                         optimizer.zero_grad()   # Set the gradients of parameters to zero before backpropagation
                         train_loss.backward()   # Backpropagation
@@ -536,10 +536,10 @@ if __name__ == "__main__":
                         # train_data_unique_dst_node_ids_tqdm.set_description(f'Epoch: {epoch + 1}, train for the {train_window_idx[0] + 1}-th batch, train loss: {loss.item()}')
 
                         if args.model_name in ['JODIE', 'DyRep', 'TGN']:
-                            # detach the memories and raw messages of nodes in the memory bank after each batch, so we don't back propagate to the start of time
+                            # Detach the memories and raw messages of nodes in the memory bank after each batch, so we don't back propagate to the start of time
                             model[0].memory_bank.detach_memory_bank()
 
-                        # Break out of the training loop when the last destination node of the training dataset is reached.
+                        # Break out of the training loop when the last destination node of the training dataset is reached
                         if train_window_dst_node_end < train_data_dst_node_end:
                             log_patch.info(f"Moving on to the next training window...\n")
                         elif train_window_dst_node_end == train_data_dst_node_end:
@@ -557,58 +557,46 @@ if __name__ == "__main__":
                 
                 ########## VALIDATION ##########
                 
-                log_patch.info(f"********** PATCH {patch_id + 1:04d} | RUN {run + 1} | EPOCH {epoch + 1} | VALIDATION **********")
-                if epoch == 9:
-                    # UNCOMMENT FOR DEBUGGING: Visualise the validation results
-                    val_metrics = evaluate_image_link_prediction_without_dataloader(logger=log_patch,
-                                                                                model_name=args.model_name,
-                                                                                model=model,
-                                                                                neighbor_sampler=full_neighbor_sampler,
-                                                                                edge_ids_array=val_data.edge_ids,
-                                                                                evaluate_data=val_data,
-                                                                                eval_stage='val',
-                                                                                eval_metric_name=eval_metric_name,
-                                                                                evaluator=evaluator,
-                                                                                evaluate_metrics=val_metrics,
-                                                                                edge_raw_features=edge_raw_features,
-                                                                                edge_node_pairs=edge_node_pairs,
-                                                                                node_mapping=node_mapping,
-                                                                                num_neighbors=args.num_neighbors,
-                                                                                time_gap=args.time_gap,
-                                                                                l1_regularisation_lambda=args.l1_regularisation_lambda,
-                                                                                l2_regularisation_lambda=args.l2_regularisation_lambda,
-                                                                                visualize=True,
-                                                                                plot_distributions=True,
-                                                                                epoch=epoch+1)
-                else:
-                    # Validate as per normal without visualizing
-                    val_metrics = evaluate_image_link_prediction_without_dataloader(logger=log_patch,
-                                                                                model_name=args.model_name,
-                                                                                model=model,
-                                                                                neighbor_sampler=full_neighbor_sampler,
-                                                                                edge_ids_array=val_data.edge_ids,
-                                                                                evaluate_data=val_data,
-                                                                                eval_stage='val',
-                                                                                eval_metric_name=eval_metric_name,
-                                                                                evaluator=evaluator,
-                                                                                evaluate_metrics=val_metrics,
-                                                                                edge_raw_features=edge_raw_features,
-                                                                                edge_node_pairs=edge_node_pairs,
-                                                                                node_mapping=node_mapping,
-                                                                                num_neighbors=args.num_neighbors,
-                                                                                time_gap=args.time_gap,
-                                                                                l1_regularisation_lambda=args.l1_regularisation_lambda,
-                                                                                l2_regularisation_lambda=args.l2_regularisation_lambda,
-                                                                                visualize=False,
-                                                                                plot_distributions=True,
-                                                                                epoch=epoch+1)
+                log_patch.info(f"********** PATCH {patch_id + 1:05d} | RUN {run + 1} | EPOCH {epoch + 1} | VALIDATION **********")
+                visualize_flag = False
+                distributions_all_flag = False
+                distributions_flag = False
+                
+                # UNCOMMENT FOR DEBUGGING: Visualise and plot distributions of the validation results
+                if epoch in [19]:
+                    visualize_flag = True
+                    distributions_all_flag = True
+                    distributions_flag = True
+                    
+                # Validate as per normal without visualizing
+                val_metrics = evaluate_image_link_prediction_without_dataloader(logger=log_patch,
+                                                                            model_name=args.model_name,
+                                                                            model=model,
+                                                                            neighbor_sampler=full_neighbor_sampler,
+                                                                            edge_ids_array=val_data.edge_ids,
+                                                                            evaluate_data=val_data,
+                                                                            eval_stage='val',
+                                                                            eval_metric_name=eval_metric_name,
+                                                                            evaluator=evaluator,
+                                                                            evaluate_metrics=val_metrics,
+                                                                            edge_raw_features=edge_raw_features,
+                                                                            edge_node_pairs=edge_node_pairs,
+                                                                            node_mapping=node_mapping,
+                                                                            num_neighbors=args.num_neighbors,
+                                                                            time_gap=args.time_gap,
+                                                                            l1_regularisation_lambda=args.l1_regularisation_lambda,
+                                                                            l2_regularisation_lambda=args.l2_regularisation_lambda,
+                                                                            visualize=visualize_flag,
+                                                                            distributions_all=distributions_all_flag,
+                                                                            distributions=distributions_flag,
+                                                                            epoch=epoch+1)
                     
                 if args.model_name in ['JODIE', 'DyRep', 'TGN']:
-                    # backup memory bank after validating so it can be used for testing nodes (since test edges are strictly later in time than validation edges)
+                    # Backup memory bank after validating so it can be used for testing nodes (since test edges are strictly later in time than validation edges)
                     val_backup_memory_bank = model[0].memory_bank.backup_memory_bank()
                 
                 # Logging validation loss for the specified epoch
-                log_patch.info(f"VALIDATION LOSS FOR PATCH {patch_id + 1:04d}, RUN {run + 1}, EPOCH {epoch + 1}: {val_metrics[-1]['val MAE loss']}\n\n")
+                log_patch.info(f"VALIDATION LOSS FOR PATCH {patch_id + 1:05d}, RUN {run + 1}, EPOCH {epoch + 1}: {val_metrics[-1]['val MAE loss']}\n\n")
                 
                 # Logging average training and validation losses
                 log_patch.info(f'Number of epochs: {epoch + 1}, learning rate: {optimizer.param_groups[0]["lr"]}, mean train loss: {np.mean(train_losses):.4f}')
@@ -625,7 +613,7 @@ if __name__ == "__main__":
                 early_stop = early_stopping.step(val_metric_indicator, model)
 
                 if early_stop:
-                    log_patch.info(f"Early stopping at EPOCH {epoch + 1} for PATCH {patch_id + 1:04d} | RUN {run + 1}.\n")
+                    log_patch.info(f"Early stopping at EPOCH {epoch + 1} for PATCH {patch_id + 1:05d} | RUN {run + 1}.\n")
                     break
             
             # Load the best model
@@ -638,7 +626,7 @@ if __name__ == "__main__":
             # Evaluate the best model
             log_patch.info(f'Get final performance on dataset: {args.dataset_name}...\n')
 
-            log_patch.info(f"********** PATCH {patch_id + 1:04d} | RUN {run + 1} | TESTING **********")
+            log_patch.info(f"********** PATCH {patch_id + 1:05d} | RUN {run + 1} | TESTING **********")
             test_metrics = evaluate_image_link_prediction_without_dataloader(logger=log_patch,
                                                                             model_name=args.model_name,
                                                                             model=model,
@@ -657,7 +645,9 @@ if __name__ == "__main__":
                                                                             l1_regularisation_lambda=args.l1_regularisation_lambda,
                                                                             l2_regularisation_lambda=args.l2_regularisation_lambda,
                                                                             visualize=True,
-                                                                            plot_distributions=True)
+                                                                            distributions_all=True,
+                                                                            distributions=True,
+                                                                            epoch=epoch+1)
 
             # exit(0)
             # store the evaluation metrics at the current run
@@ -675,7 +665,7 @@ if __name__ == "__main__":
                 test_metric_dict[metric_name] = average_test_metric
 
             single_run_time = time.time() - run_start_time
-            log_patch.info(f'PATCH {patch_id + 1:04d} RUN {run + 1} takes {single_run_time:.3f} seconds.')
+            log_patch.info(f'PATCH {patch_id + 1:05d} RUN {run + 1} takes {single_run_time:.3f} seconds.')
 
             if args.model_name not in ['JODIE', 'DyRep', 'TGN']:
                 val_metric_all_runs.append(val_metric_dict)
@@ -701,7 +691,7 @@ if __name__ == "__main__":
                 file.write(result_json)
 
         # Store the average metrics at the log of the last run
-        log_patch.info(f'Metrics over {args.num_runs} RUNS for PATCH {patch_id + 1:04d}:')
+        log_patch.info(f'Metrics over {args.num_runs} RUNS for PATCH {patch_id + 1:05d}:')
 
         if args.model_name not in ['JODIE', 'DyRep', 'TGN']:
             for metric_name in val_metric_all_runs[0].keys():
@@ -729,7 +719,12 @@ if __name__ == "__main__":
 
     # Stitch all patches to create merged image for each edge predicted using median 
     if args.stitch_method == 'median':
-        for pred_file in sorted([f for f in os.listdir(f"patch_0001/image_result") if f.startswith("test_end_") and f.endswith("_pred.npy")]): 
+        patch_dirs = sorted([d for d in os.listdir(".") if os.path.isdir(d) and re.match(r"patch_\d{4}$", d)])  # Get list of all patch folders
+        for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("train_") and f.endswith("_pred.npy")]): # Get unique train _pred.npy files from the first patch folder as a reference
+            stitchPatchMedian(log_main, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
+        for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("val_") and f.endswith("_pred.npy")]): # Get unique val _pred.npy files from the first patch folder as a reference
+            stitchPatchMedian(log_main, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
+        for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("test_end_") and f.endswith("_pred.npy")]): # Get unique test _pred.npy files from the first patch folder as a reference
             stitchPatchMedian(log_main, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
         # Check if the merged image was created successfully
         if (merged_img_count := sum("pred_merged_img.npy" in f for f in os.listdir(merged_dir))):

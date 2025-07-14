@@ -45,8 +45,9 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                                                     l1_regularisation_lambda: float = 0.0,
                                                     l2_regularisation_lambda: float = 0.0,
                                                     visualize: bool = False,
-                                                    plot_distributions: bool = True,
-                                                    **kwargs):
+                                                    distributions_all: bool = True,
+                                                    distributions: bool = True,
+                                                    epoch: int = 1):
     """
     Evaluate models on the link prediction task without requiring a data loader
     Processing all edges in a single batch
@@ -129,12 +130,12 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
         else:
             raise ValueError(f"Wrong value for model_name {model_name}!")
 
-        # # Predict the positive probabilities
-        # # UNCOMMENT FOR DEBUGGING: Uncomment the following lines for edge predictions with different modification operations
-        # # When changing the following lines, we must also change the edge prediction lines in "image_link_prediction.py"
-        # # (1) predictions without modification operations 
-        # # (2) predictions with an external sigmoid operation (not recommended)
-        # # (3) predictions with an external clamp operation (not recommended)
+        # Predict the positive probabilities
+        # UNCOMMENT FOR DEBUGGING: Uncomment the following lines for edge predictions with different modification operations
+        # When changing the following lines, we must also change the edge prediction lines in "image_link_prediction.py"
+        # (1) predictions without modification operations 
+        # (2) predictions with an external sigmoid operation (not recommended)
+        # (3) predictions with an external clamp operation (not recommended)
         positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).cpu().numpy()
         # positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).sigmoid().cpu().numpy()
         # positive_probabilities = model[1](input_1=src_node_embeddings, input_2=dst_node_embeddings).squeeze(dim=-1).clamp(min=0.0, max=1.0).cpu().numpy()
@@ -161,88 +162,8 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                     f"abs(GROUND TRUTH - PREDICTION) Percentiles: \n"
                     f"{np.percentile(np.abs(residuals_full_object), [0, 1, 25, 50, 75, 99, 100])}\n")
 
-        # Plotting distributions for GT, Pred, Residuals, abs(Residuals)
-        if eval_stage == "test_end" or plot_distributions:
-
-            # Create the output folder if it doesn't exist
-            image_distributions_folder = os.path.join(os.getcwd(), "image_distributions")
-            os.makedirs(image_distributions_folder, exist_ok=True)
-
-            # Flatten the GT, Pred, Residuals, abs(Residuals) objects for distribution plotting
-            gt_dist_flat = edge_raw_features[edge_ids_array].flatten()
-            pred_dist_flat = positive_probabilities.flatten()
-            residuals_dist_flat = residuals_full_object.flatten()
-            abs_residuals_dist_flat = np.abs(residuals_full_object).flatten()
-
-            # Plot distributions for evaluation stages (except for "test_end")
-            if eval_stage != "test_end":
-
-                # # Get the relevant epoch that is being evaluated (mainly for validation stage). 
-                # # For test_end stage there is no epoch value. If no epochs specified, None is returned.
-                epoch = kwargs.get("epoch", None)
-                if epoch != None:
-                    save_distributions_name = os.path.join(image_distributions_folder, f"{eval_stage}_epoch-{epoch:04d}_all-edges_distributions")
-                else:
-                    save_distributions_name = os.path.join(image_distributions_folder, f"{eval_stage}_distributions")
-                
-                # Plot the distributions
-                evaluate_image_link_prediction_plot_distributions(logger=logger,
-                                                                  gt_img=gt_dist_flat,
-                                                                  pred_img=pred_dist_flat,
-                                                                  residuals_img=residuals_dist_flat,
-                                                                  abs_residuals_img=abs_residuals_dist_flat,
-                                                                  save_path=save_distributions_name+".png")
-
-            # Plot distributions for the "test_end" evaluation stage
-            # For the "test_end" stage, we plot the distributions of (1) all edges collectively, and (2) each individual edge
-            elif eval_stage == "test_end":
-
-                # First, plot distributions of all edges collectively in "test_end"
-                # Get the file name (all edges collectively in "test_end")
-                save_distributions_name = os.path.join(image_distributions_folder, f"{eval_stage}_all-edges_distributions")
-
-                # Plot the distributions (all edges collectively in "test_end")
-                evaluate_image_link_prediction_plot_distributions(logger=logger,
-                                                                  gt_img=gt_dist_flat,
-                                                                  pred_img=pred_dist_flat,
-                                                                  residuals_img=residuals_dist_flat,
-                                                                  abs_residuals_img=abs_residuals_dist_flat,
-                                                                  save_path=save_distributions_name+".png")
-                
-                # Next, plot distributions of each individual edge in "test_end"
-                # Get the num_edges and relevant node and date information for each edge
-                num_edges = positive_probabilities.shape[0]
-
-                # Iterate through the individual edges
-                for i in range(num_edges):
-
-                    # Flatten the GT, Pred, Residuals, abs(Residuals) objects for each edge for distribution plotting
-                    gt_edge_dist_flat = edge_raw_features[edge_ids_array][i].flatten()
-                    pred_edge_dist_flat = positive_probabilities[i].flatten()
-                    residuals_edge_dist_flat = residuals_full_object[i].flatten()
-                    abs_residuals_edge_dist_flat = np.abs(residuals_full_object)[i].flatten()
-
-                    # Get dates from node and edge mappings
-                    edge_id = edge_ids_array[i]
-                    src_node_id, dst_node_id = edge_node_pairs[edge_id-1]
-                    src_date = node_mapping.loc[node_mapping['nodeID'] == src_node_id, 'date'].values[0]
-                    dst_date = node_mapping.loc[node_mapping['nodeID'] == dst_node_id, 'date'].values[0]
-                    src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
-                    dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
-
-                    # Get the file name (individual edges in "test_end")
-                    save_edge_distributions_name = os.path.join(image_distributions_folder, f"{eval_stage}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}_distributions")
-
-                    # Plot the distributions (individual edges in "test_end")
-                    evaluate_image_link_prediction_plot_distributions(logger=logger,
-                                                                      gt_img=gt_edge_dist_flat,
-                                                                      pred_img=pred_edge_dist_flat,
-                                                                      residuals_img=residuals_edge_dist_flat,
-                                                                      abs_residuals_img=abs_residuals_edge_dist_flat,
-                                                                      save_path=save_edge_distributions_name+".png")
-
-        # For test_end stage or if visualise is set to true, visualize results 
-        if eval_stage == "test_end" or visualize:
+        # Visualizing GT, Pred, Residuals, abs(Residuals)
+        if visualize:
             # Create the output folder if it doesn't exist
             result_folder = os.path.join(os.getcwd(), "image_result")
             os.makedirs(result_folder, exist_ok=True)
@@ -265,7 +186,7 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                 dst_date = node_mapping.loc[node_mapping['nodeID'] == dst_node_id, 'date'].values[0]
                 src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
                 dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
-                save_name = os.path.join(result_folder, f"{eval_stage}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}") 
+                save_name = os.path.join(result_folder, f"{eval_stage}_epoch-{epoch:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}")                  
                 
                 # Reshape ground truth and prediction into 2D
                 gt_2d = reshape_to_2d(gt_embeddings[i], H, W)
@@ -279,7 +200,65 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                 np.save(save_name + "_residualabs.npy", np.abs(residual_2d))
                 
                 # Visualize results
-                evaluate_image_link_prediction_visualiser(logger, gt_2d, pred_2d, save_name + ".png")              
+                evaluate_image_link_prediction_visualiser(logger, gt_2d, pred_2d, save_name + "_visual.png")  
+
+        # Plot distributions of all edges collectively in the epoch for GT, Pred, Residuals, abs(Residuals)
+        if distributions_all:
+
+            # Create the output folder if it doesn't exist
+            result_folder = os.path.join(os.getcwd(), "image_result")
+            os.makedirs(result_folder, exist_ok=True)
+
+            # Flatten the GT, Pred, Residuals, abs(Residuals) objects for distribution plotting
+            gt_dist_flat = edge_raw_features[edge_ids_array].flatten()
+            pred_dist_flat = positive_probabilities.flatten()
+            residuals_dist_flat = residuals_full_object.flatten()
+            abs_residuals_dist_flat = np.abs(residuals_full_object).flatten()
+
+            # Plot results
+            save_name = os.path.join(result_folder, f"{eval_stage}_epoch-{epoch:04d}_all-edges_distributions")
+            evaluate_image_link_prediction_plot_distributions(logger=logger,
+                                                                gt_img=gt_dist_flat,
+                                                                pred_img=pred_dist_flat,
+                                                                residuals_img=residuals_dist_flat,
+                                                                abs_residuals_img=abs_residuals_dist_flat,
+                                                                save_path=save_name+".png")
+        
+        # Plot distributions of each individual edge in the epoch for GT, Pred, Residuals, abs(Residuals)
+        if distributions:
+            
+            # Create the output folder if it doesn't exist
+            result_folder = os.path.join(os.getcwd(), "image_result")
+            os.makedirs(result_folder, exist_ok=True)
+            
+            # Get the num_edges and relevant node and date information for each edge
+            num_edges = positive_probabilities.shape[0]
+
+            # Iterate through the individual edges
+            for i in range(num_edges):
+
+                # Flatten the GT, Pred, Residuals, abs(Residuals) objects for each edge for distribution plotting
+                gt_edge_dist_flat = edge_raw_features[edge_ids_array][i].flatten()
+                pred_edge_dist_flat = positive_probabilities[i].flatten()
+                residuals_edge_dist_flat = residuals_full_object[i].flatten()
+                abs_residuals_edge_dist_flat = np.abs(residuals_full_object)[i].flatten()
+
+                # Get dates from node and edge mappings
+                edge_id = edge_ids_array[i]
+                src_node_id, dst_node_id = edge_node_pairs[edge_id-1]
+                src_date = node_mapping.loc[node_mapping['nodeID'] == src_node_id, 'date'].values[0]
+                dst_date = node_mapping.loc[node_mapping['nodeID'] == dst_node_id, 'date'].values[0]
+                src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
+                dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
+
+                # Plot results
+                save_name = os.path.join(result_folder, f"{eval_stage}_epoch-{epoch:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}_distributions")
+                evaluate_image_link_prediction_plot_distributions(logger=logger,
+                                                                    gt_img=gt_edge_dist_flat,
+                                                                    pred_img=pred_edge_dist_flat,
+                                                                    residuals_img=residuals_edge_dist_flat,
+                                                                    abs_residuals_img=abs_residuals_edge_dist_flat,
+                                                                    save_path=save_name+".png")            
 
         # Compute loss (using MAE / L1 loss here)
         loss = np.mean(np.abs(edge_raw_features[edge_ids_array] - positive_probabilities))
@@ -291,12 +270,14 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
             l1_norm = sum(p.abs().sum() for p in model.parameters() if p.requires_grad)
             loss += l1_regularisation_lambda * l1_norm.item()
             logger.info(f"[{eval_stage.upper()}] L1-REGULARISED LOSS (L1-Lambda = {l1_regularisation_lambda}): {loss}\n")
+
         # Apply L2 Regularisation (Ridge), if applicable
         elif l1_regularisation_lambda == 0 and l2_regularisation_lambda != 0:
             logger.info(f"[{eval_stage.upper()}] Conducting L2-Regularisation (Ridge) on the Loss Function")
             l2_norm = sum(p.pow(2.0).sum() for p in model.parameters() if p.requires_grad)
             loss += l2_regularisation_lambda * l2_norm.item()
             logger.info(f"[{eval_stage.upper()}] L2-REGULARISED LOSS (L2-Lambda = {l2_regularisation_lambda}): {loss}\n")
+
         # Apply Elastic Net Regularisation (L1 + L2 Regularisation), if applicable
         elif l1_regularisation_lambda != 0 and l2_regularisation_lambda != 0:
             logger.info(f"[{eval_stage.upper()}] Conducting Elastic Net Regularisation (L1 & L2 regularisation) on the Loss Function")
@@ -304,6 +285,7 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
             l2_norm = sum(p.pow(2.0).sum() for p in model.parameters() if p.requires_grad)
             loss += (l1_regularisation_lambda * l1_norm.item()) + (l2_regularisation_lambda * l2_norm.item())
             logger.info(f"[{eval_stage.upper()}] ELASTIC-NET-REGULARISED LOSS (L1-Lambda = {l1_regularisation_lambda}, L2-Lambda = {l2_regularisation_lambda}): {loss}\n")
+        
         # If no regularisation takes place, retain the original loss function
         else:
             logger.info(f"[{eval_stage.upper()}] No regularisation was applied and the original loss function remains unchanged.\n")

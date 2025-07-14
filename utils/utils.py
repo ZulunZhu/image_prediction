@@ -98,9 +98,9 @@ class NeighborSampler:
             # sort the list based on timestamps, sorted() function is stable
             # Note that sort the list based on edge id is also correct, as the original data file ensures the interactions are chronological
             sorted_per_node_neighbors = sorted(per_node_neighbors, key=lambda x: x[2])
-            self.nodes_neighbor_ids.append(np.array([x[0] for x in sorted_per_node_neighbors]))
-            self.nodes_edge_ids.append(np.array([x[1] for x in sorted_per_node_neighbors]))
-            self.nodes_neighbor_times.append(np.array([x[2] for x in sorted_per_node_neighbors]))
+            self.nodes_neighbor_ids.append(np.array([x[0] for x in sorted_per_node_neighbors]))  # Contains IDs of all nodes which this node has interacted with, regardless of backward or forward direction
+            self.nodes_edge_ids.append(np.array([x[1] for x in sorted_per_node_neighbors]))  # Contains IDs of all edges which this node is involved in, regardless of backward or forward direction
+            self.nodes_neighbor_times.append(np.array([x[2] for x in sorted_per_node_neighbors]))  # Contains all timestamps at which this node interacted with other nodes, regardless of backward or forward direction
 
             # additional for time interval aware sampling strategy (proposed in CAWN paper)
             if self.sample_neighbor_strategy == 'time_interval_aware':

@@ -6,23 +6,23 @@ import torch.nn.functional as F
 
 class TimeEncoder(nn.Module):
 
-    def __init__(self, time_dim: int, parameter_requires_grad: bool = True):
+    def __init__(self, time_dim: int):
+    # def __init__(self, time_dim: int, parameter_requires_grad: bool = True):
         """
         Time encoder.
         :param time_dim: int, dimension of time encodings
         :param parameter_requires_grad: boolean, whether the parameter in TimeEncoder needs gradient
         """
         super(TimeEncoder, self).__init__()
-
         self.time_dim = time_dim
-        # trainable parameters for time encoding
-        self.w = nn.Linear(1, time_dim)
-        self.w.weight = nn.Parameter((torch.from_numpy(1 / 10 ** np.linspace(0, 9, time_dim, dtype=np.float32))).reshape(time_dim, -1))
-        self.w.bias = nn.Parameter(torch.zeros(time_dim))
-
-        if not parameter_requires_grad:
-            self.w.weight.requires_grad = False
-            self.w.bias.requires_grad = False
+        
+        # Trainable parameters for time encoding
+        # self.w = nn.Linear(1, time_dim)
+        # self.w.weight = nn.Parameter((torch.from_numpy(1 / 10 ** np.linspace(0, 9, time_dim, dtype=np.float32))).reshape(time_dim, -1))
+        # self.w.bias = nn.Parameter(torch.zeros(time_dim))
+        # if not parameter_requires_grad:
+        #     self.w.weight.requires_grad = False
+        #     self.w.bias.requires_grad = False
 
     def forward(self, timestamps: torch.Tensor):
         """
@@ -30,12 +30,17 @@ class TimeEncoder(nn.Module):
         :param timestamps: Tensor, shape (batch_size, seq_len)
         :return:
         """
+        # Original timestamps
         # Tensor, shape (batch_size, seq_len, 1)
-        timestamps = timestamps.unsqueeze(dim=2)
-
+        timestamps_cpu = timestamps.cpu().numpy()
+        
+        # Encoded timestamps
         # Tensor, shape (batch_size, seq_len, time_dim)
-        output = torch.cos(self.w(timestamps))
-
+        timestamps_flat = timestamps_cpu.astype(int).reshape(-1)  # Reshape into a flat array for encoding
+        encoded = sincosEncoder(timestamps_flat, d=self.time_dim, n=10000)  # Sine-cosine encoding
+        output_np = encoded.reshape(*timestamps_cpu.shape, self.time_dim)  # Reshape back to original and add required time dimension
+        output = torch.tensor(output_np, dtype=torch.float32, device=timestamps.device)
+        
         return output
 
 
@@ -50,16 +55,16 @@ class MergeLayer(nn.Module):
         :param output_dim: int, dimension of the output
         """
         super().__init__()
-        self.fc1 = nn.Linear(input_dim1 + input_dim2, hidden_dim)   # Defaults: input_dim1 = 172, input_dim2 = 172, hidden_dim = 172
-        self.fc2 = nn.Linear(hidden_dim, output_dim)                # Defaults: hidden_dim = 172, output_dim = edge_raw_features.shape[1] = (num_edges + 1) due to vstack padding
-        self.act = nn.ReLU()           
+        self.fc1 = nn.Linear(input_dim1 + input_dim2, hidden_dim)
+        self.fc2 = nn.Linear(hidden_dim, output_dim)
+        self.act = nn.ReLU()
 
         # Sigmoid activation function with temperature scaling (y = 1 / (1 + e^(-x/temperature)))
         # Default sigmoid temperature is set to 1
-        # If temperature is set to < 1, it will make the sigmoid function sharper
-        # If temperature is set to > 1, it will make the sigmoid function smoother
-        temperature = 1
-        self.final_act = lambda x: torch.sigmoid(x / temperature)
+        # If sigmoid temperature is set to < 1, it will make the sigmoid function steeper
+        # If sigmoid temperature is set to > 1, it will make the sigmoid function gentler
+        sigmoid_temperature = 1
+        self.final_act = lambda x: torch.sigmoid(x / sigmoid_temperature)
 
         # self.final_act = nn.Sigmoid()   
         # self.final_act = lambda x: torch.clamp(x, min=0.0, max=1.0)
@@ -73,9 +78,11 @@ class MergeLayer(nn.Module):
         """
         # Tensor, shape (*, input_dim1 + input_dim2)
         x = torch.cat([input_1, input_2], dim=1)
+        
         # Tensor, shape (*, output_dim)
-        # h = self.fc2(self.act(self.fc1(x)))
-        h = self.final_act(self.fc2(self.act(self.fc1(x))))
+        h = self.fc2(self.act(self.fc1(x)))
+        # h = self.final_act(self.fc2(self.act(self.fc1(x))))
+        
         return h
 
 
@@ -287,3 +294,17 @@ class TransformerEncoder(nn.Module):
         outputs = self.norm_layers[1](outputs + self.dropout(hidden_states))
 
         return outputs
+
+
+def sincosEncoder(dates, d, n=10000):
+    # dates: array-like, shape (n_samples,)
+    # d: int, dimension of the output encoding
+    # n: int, scaling factor for the encoding
+    P = np.zeros((len(dates), d))
+    for k, date in enumerate(dates):
+        for i in np.arange(int(d/2)):
+            denominator = np.power(n, 2*i/d)
+            P[k, 2*i] = np.sin(date/denominator)
+            P[k, 2*i+1] = np.cos(date/denominator)
+    return P
+ 
