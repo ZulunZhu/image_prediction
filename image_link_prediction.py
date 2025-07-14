@@ -719,7 +719,7 @@ if __name__ == "__main__":
 
     # Stitch all patches to create merged image for each edge predicted using median 
     if args.stitch_method == 'median':
-        patch_dirs = sorted([d for d in os.listdir(".") if os.path.isdir(d) and re.match(r"patch_\d{4}$", d)])  # Get list of all patch folders
+        patch_dirs = sorted([d for d in os.listdir(".") if os.path.isdir(d) and re.match(r"patch_\d{5}$", d)])  # Get list of all patch folders
         for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("train_") and f.endswith("_pred.npy")]): # Get unique train _pred.npy files from the first patch folder as a reference
             stitchPatchMedian(log_main, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
         for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("val_") and f.endswith("_pred.npy")]): # Get unique val _pred.npy files from the first patch folder as a reference
