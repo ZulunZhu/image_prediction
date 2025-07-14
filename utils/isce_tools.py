@@ -110,6 +110,7 @@ def computePatches(image_file, image_x, image_y, patch_length, patch_overlap):
         ax.add_patch(rect)
     plt.tight_layout()
     plt.savefig("patches_length-{}_overlap-{}.png".format(patch_length, patch_overlap), dpi=300, bbox_inches='tight')
+    plt.close(fig)
     # Checks
     # print("Total image width (x-axis): ", image_x)
     # print("Total image length (y-axis): ", image_y) 
