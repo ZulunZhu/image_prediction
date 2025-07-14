@@ -34,13 +34,16 @@ You can use pip or conda tools to install these packages.
 
 ## Installation
 Do the following in a clean conda environment (note that seaborn has been added as of 12 July 2025, have only tested its installation independently after pip install):  
+```
 $ source /home/tayw0049/miniconda3/etc/profile.d/conda.sh 
 $ conda create -n image_prediction python=3.9 
 $ conda activate image_prediction 
 $ pip install py-tgb numpy==1.23.5 pandas==1.5.3 torch torchvision torchaudio matplotlib scikit-image 
-$ conda install seaborn 
+$ conda install seaborn
+```
 
 Check installed packages: 
+```
 $ conda list 
 packages in environment at /home/tayw0049/miniconda3/envs/image_prediction:                                                                                                                                           
 Name                      Version                   Build  Channel          
@@ -159,6 +162,7 @@ yarl                      1.18.3                   pypi_0    pypi
 zipp                      3.21.0           py39h06a4308_0  
 zlib                      1.2.13               h5eee18b_1  
 zstd                      1.5.6                hc292b87_0
+```
 
 As part of the tgb installation, other packages such as pytorch, tqdm, scikit-learn will be installed along with tgb too. However, other packages such as torch, matplotlib, and scikit-image will not be installed and need to be specified during installation. 
 
