@@ -9,6 +9,7 @@ import warnings
 import shutil
 import json
 import math
+import re
 import torch
 import torch.nn as nn
 from sklearn.metrics import average_precision_score, roc_auc_score
@@ -98,8 +99,15 @@ if __name__ == "__main__":
     # Iterate over each image patch
     for patch_id, patch_bbox in enumerate(patchList):
         
+        # Debugging: run the patch only if it overlaps with the target area
+        # x1, x2, y1, y2 = patch_bbox
+        # target_x1, target_x2 = 650, 850
+        # target_y1, target_y2 = 20, 220
+        # if (x2 < target_x1 or x1 > target_x2 or y2 < target_y1 or y1 > target_y2):
+        #     continue
+        
         # Create sub-directory for the patch
-        patch_dir = os.path.join(work_dir,'patch_' + f"{patch_id+1:04d}")
+        patch_dir = os.path.join(work_dir,'patch_' + f"{patch_id+1:05d}")
         os.makedirs(patch_dir, exist_ok=True)
         
         # Set up logger for this patch 
@@ -119,7 +127,7 @@ if __name__ == "__main__":
         log_patch.addHandler(ch)
 
         # Process dataset for the patch
-        log_patch.info(f"\n********** PATCH {patch_id + 1:04d} **********\n")
+        log_patch.info(f"\n********** PATCH {patch_id + 1:05d} **********\n")
         log_patch.info(f"Patch bbox: {patch_bbox}")
         _, _, date_to_id, edge_node_pairs, node_mapping = prepareData(log_patch, data_dir, patch_dir, patch_bbox, amp_norm=args.amp_norm, cor_logit=args.cor_logit)
 
@@ -193,7 +201,7 @@ if __name__ == "__main__":
             # Start the timer for the run
             run_start_time = time.time()
 
-            log_patch.info(f"********** PATCH {patch_id + 1:04d} | RUN {run + 1} **********\n")
+            log_patch.info(f"********** PATCH {patch_id + 1:05d} | RUN {run + 1} **********\n")
             log_patch.info(f"CONFIGURATION: {args}\n")
             
             # Create model
@@ -259,7 +267,7 @@ if __name__ == "__main__":
             for epoch in range(args.num_epochs):
 
                 log_patch.info(f"TRAINING with {args.num_epochs} epochs...")
-                log_patch.info(f"********** PATCH {patch_id + 1:04d} | RUN {run + 1} | EPOCH {epoch + 1} **********\n")
+                log_patch.info(f"********** PATCH {patch_id + 1:05d} | RUN {run + 1} | EPOCH {epoch + 1} **********\n")
 
                 # Set model to training mode
                 model.train()
@@ -288,7 +296,7 @@ if __name__ == "__main__":
                 # Iterating through the training windows with a stride of 1 per iteration (default)
                 for train_window_idx in enumerate(range(train_data_src_node_start, train_data_dst_node_end + 1, args.temporal_window_stride)):
                     
-                    log_patch.info(f"********** PATCH {patch_id + 1:04d} | RUN {run + 1} | EPOCH {epoch + 1} | TRAINING WINDOW {train_window_idx[0] + 1} **********")
+                    log_patch.info(f"********** PATCH {patch_id + 1:05d} | RUN {run + 1} | EPOCH {epoch + 1} | TRAINING WINDOW {train_window_idx[0] + 1} **********")
 
                     # Get the start and end of the src and dst nodes of the temporal window in the specified iteration
                     train_window_src_node_start = train_data_src_node_start + train_window_idx[0]
@@ -492,7 +500,7 @@ if __name__ == "__main__":
                             
                         # UNCOMMENT FOR DEBUGGING: to visualize train results
                         # if epoch in [3,4,5,6,7,29] and train_window_idx[0] == 0:
-                        if epoch in [9]:
+                        if epoch in [19]:
                             os.makedirs(patch_dir + "/image_result", exist_ok=True)
                             for nbei, bei in enumerate(batch_edge_ids):
                                 # Get dates from node and edge mappings
@@ -502,13 +510,14 @@ if __name__ == "__main__":
                                 src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
                                 dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
                                 save_name = os.path.join(patch_dir, f"image_result/train_epoch-{epoch+1:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{bei:04d}_{src_date_str}-{dst_date_str}")
-                                # Save and visualize results
+                                # Save results
                                 gt_flat = edge_raw_features[bei,]
                                 gt_img = gt_flat.reshape((args.patch_length,args.patch_length))
                                 pred_flat = predicted_edge_feature[nbei,].detach().cpu().numpy()
                                 pred_img = pred_flat.reshape((args.patch_length,args.patch_length))
                                 np.save(save_name + "_gt.npy", gt_img)
                                 np.save(save_name + "_pred.npy", pred_img)
+                                # Visualise and plot distributions of results
                                 evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_name+"_visual.png")
                                 evaluate_image_link_prediction_plot_distributions(log_patch,gt_flat,pred_flat,gt_flat-pred_flat,np.abs(gt_flat-pred_flat),save_name+"_distributions.png")
                         
@@ -517,7 +526,7 @@ if __name__ == "__main__":
                         train_metrics.append({'Training MAE loss': train_loss.item()})
 
                         # Logging training loss for the specified training window
-                        log_patch.info(f"TRAINING LOSS FOR PATCH {patch_id + 1:04d}, RUN {run + 1}, EPOCH {epoch + 1}, TRAINING WINDOW {train_window_idx[0] + 1}: {train_loss.item()}\n")
+                        log_patch.info(f"TRAINING LOSS FOR PATCH {patch_id + 1:05d}, RUN {run + 1}, EPOCH {epoch + 1}, TRAINING WINDOW {train_window_idx[0] + 1}: {train_loss.item()}\n")
 
                         optimizer.zero_grad()   # Set the gradients of parameters to zero before backpropagation
                         train_loss.backward()   # Backpropagation
@@ -548,13 +557,13 @@ if __name__ == "__main__":
                 
                 ########## VALIDATION ##########
                 
-                log_patch.info(f"********** PATCH {patch_id + 1:04d} | RUN {run + 1} | EPOCH {epoch + 1} | VALIDATION **********")
+                log_patch.info(f"********** PATCH {patch_id + 1:05d} | RUN {run + 1} | EPOCH {epoch + 1} | VALIDATION **********")
                 visualize_flag = False
                 distributions_all_flag = False
                 distributions_flag = False
                 
                 # UNCOMMENT FOR DEBUGGING: Visualise and plot distributions of the validation results
-                if epoch in [9]:
+                if epoch in [19]:
                     visualize_flag = True
                     distributions_all_flag = True
                     distributions_flag = True
@@ -587,7 +596,7 @@ if __name__ == "__main__":
                     val_backup_memory_bank = model[0].memory_bank.backup_memory_bank()
                 
                 # Logging validation loss for the specified epoch
-                log_patch.info(f"VALIDATION LOSS FOR PATCH {patch_id + 1:04d}, RUN {run + 1}, EPOCH {epoch + 1}: {val_metrics[-1]['val MAE loss']}\n\n")
+                log_patch.info(f"VALIDATION LOSS FOR PATCH {patch_id + 1:05d}, RUN {run + 1}, EPOCH {epoch + 1}: {val_metrics[-1]['val MAE loss']}\n\n")
                 
                 # Logging average training and validation losses
                 log_patch.info(f'Number of epochs: {epoch + 1}, learning rate: {optimizer.param_groups[0]["lr"]}, mean train loss: {np.mean(train_losses):.4f}')
@@ -604,7 +613,7 @@ if __name__ == "__main__":
                 early_stop = early_stopping.step(val_metric_indicator, model)
 
                 if early_stop:
-                    log_patch.info(f"Early stopping at EPOCH {epoch + 1} for PATCH {patch_id + 1:04d} | RUN {run + 1}.\n")
+                    log_patch.info(f"Early stopping at EPOCH {epoch + 1} for PATCH {patch_id + 1:05d} | RUN {run + 1}.\n")
                     break
             
             # Load the best model
@@ -617,7 +626,7 @@ if __name__ == "__main__":
             # Evaluate the best model
             log_patch.info(f'Get final performance on dataset: {args.dataset_name}...\n')
 
-            log_patch.info(f"********** PATCH {patch_id + 1:04d} | RUN {run + 1} | TESTING **********")
+            log_patch.info(f"********** PATCH {patch_id + 1:05d} | RUN {run + 1} | TESTING **********")
             test_metrics = evaluate_image_link_prediction_without_dataloader(logger=log_patch,
                                                                             model_name=args.model_name,
                                                                             model=model,
@@ -656,7 +665,7 @@ if __name__ == "__main__":
                 test_metric_dict[metric_name] = average_test_metric
 
             single_run_time = time.time() - run_start_time
-            log_patch.info(f'PATCH {patch_id + 1:04d} RUN {run + 1} takes {single_run_time:.3f} seconds.')
+            log_patch.info(f'PATCH {patch_id + 1:05d} RUN {run + 1} takes {single_run_time:.3f} seconds.')
 
             if args.model_name not in ['JODIE', 'DyRep', 'TGN']:
                 val_metric_all_runs.append(val_metric_dict)
@@ -682,7 +691,7 @@ if __name__ == "__main__":
                 file.write(result_json)
 
         # Store the average metrics at the log of the last run
-        log_patch.info(f'Metrics over {args.num_runs} RUNS for PATCH {patch_id + 1:04d}:')
+        log_patch.info(f'Metrics over {args.num_runs} RUNS for PATCH {patch_id + 1:05d}:')
 
         if args.model_name not in ['JODIE', 'DyRep', 'TGN']:
             for metric_name in val_metric_all_runs[0].keys():
@@ -710,7 +719,12 @@ if __name__ == "__main__":
 
     # Stitch all patches to create merged image for each edge predicted using median 
     if args.stitch_method == 'median':
-        for pred_file in sorted([f for f in os.listdir(f"patch_0001/image_result") if f.startswith("test_end_") and f.endswith("_pred.npy")]): 
+        patch_dirs = sorted([d for d in os.listdir(".") if os.path.isdir(d) and re.match(r"patch_\d{4}$", d)])  # Get list of all patch folders
+        for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("train_") and f.endswith("_pred.npy")]): # Get unique train _pred.npy files from the first patch folder as a reference
+            stitchPatchMedian(log_main, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
+        for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("val_") and f.endswith("_pred.npy")]): # Get unique val _pred.npy files from the first patch folder as a reference
+            stitchPatchMedian(log_main, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
+        for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("test_end_") and f.endswith("_pred.npy")]): # Get unique test _pred.npy files from the first patch folder as a reference
             stitchPatchMedian(log_main, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
         # Check if the merged image was created successfully
         if (merged_img_count := sum("pred_merged_img.npy" in f for f in os.listdir(merged_dir))):

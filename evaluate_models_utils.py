@@ -186,7 +186,7 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                 dst_date = node_mapping.loc[node_mapping['nodeID'] == dst_node_id, 'date'].values[0]
                 src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
                 dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
-                save_name = os.path.join(result_folder, f"{eval_stage}_epoch-{epoch:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}_visual")                  
+                save_name = os.path.join(result_folder, f"{eval_stage}_epoch-{epoch:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}")                  
                 
                 # Reshape ground truth and prediction into 2D
                 gt_2d = reshape_to_2d(gt_embeddings[i], H, W)
@@ -200,7 +200,7 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                 np.save(save_name + "_residualabs.npy", np.abs(residual_2d))
                 
                 # Visualize results
-                evaluate_image_link_prediction_visualiser(logger, gt_2d, pred_2d, save_name + ".png")  
+                evaluate_image_link_prediction_visualiser(logger, gt_2d, pred_2d, save_name + "_visual.png")  
 
         # Plot distributions of all edges collectively in the epoch for GT, Pred, Residuals, abs(Residuals)
         if distributions_all:
@@ -216,13 +216,13 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
             abs_residuals_dist_flat = np.abs(residuals_full_object).flatten()
 
             # Plot results
-            save_distributions_name = os.path.join(result_folder, f"{eval_stage}_epoch-{epoch:04d}_all-edges_distributions")
+            save_name = os.path.join(result_folder, f"{eval_stage}_epoch-{epoch:04d}_all-edges_distributions")
             evaluate_image_link_prediction_plot_distributions(logger=logger,
                                                                 gt_img=gt_dist_flat,
                                                                 pred_img=pred_dist_flat,
                                                                 residuals_img=residuals_dist_flat,
                                                                 abs_residuals_img=abs_residuals_dist_flat,
-                                                                save_path=save_distributions_name+".png")
+                                                                save_path=save_name+".png")
         
         # Plot distributions of each individual edge in the epoch for GT, Pred, Residuals, abs(Residuals)
         if distributions:
@@ -252,13 +252,13 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                 dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
 
                 # Plot results
-                save_edge_distributions_name = os.path.join(result_folder, f"{eval_stage}_epoch-{epoch:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}_distributions")
+                save_name = os.path.join(result_folder, f"{eval_stage}_epoch-{epoch:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}_distributions")
                 evaluate_image_link_prediction_plot_distributions(logger=logger,
                                                                     gt_img=gt_edge_dist_flat,
                                                                     pred_img=pred_edge_dist_flat,
                                                                     residuals_img=residuals_edge_dist_flat,
                                                                     abs_residuals_img=abs_residuals_edge_dist_flat,
-                                                                    save_path=save_edge_distributions_name+".png")            
+                                                                    save_path=save_name+".png")            
 
         # Compute loss (using MAE / L1 loss here)
         loss = np.mean(np.abs(edge_raw_features[edge_ids_array] - positive_probabilities))

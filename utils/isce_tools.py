@@ -2,6 +2,7 @@ import logging
 import os
 import numpy as np
 import pandas as pd
+import re, glob
 import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -250,6 +251,8 @@ def prepareData(logger, data_in_dir, data_out_dir, bbox, **kwargs):
 
 def stitchPatchMean(logger, merged_dir, patch_file, patch_bbox, patch_length):
     
+    # Deprecated function!
+    
     # Patch file to stitch to the merged file
     patch = np.load(os.path.join("image_result",patch_file))   
 
@@ -316,7 +319,14 @@ def stitchPatchMedian(logger, merged_dir, patch_list, pred_file, x, y, chunk_siz
 
     # Initialise merged image if it doesn't exist
     logger.info(f"Starting merging (median) for {pred_file}...")
-    merged_img_file = os.path.join(merged_dir, pred_file.replace("pred", "pred_merged_img"))
+    
+    # Create filename for merged image
+    if "test_end_" in pred_file:  # Epochs will differ for test_end_ files
+        drop_epoch = re.sub(r'epoch-\d{4}_', '', pred_file)  
+        merged_img_file = os.path.join(merged_dir, drop_epoch.replace("pred", "pred_merged_img"))
+        pred_file_common = re.sub(r'epoch-\d{4}', 'epoch-*', pred_file)  # Glob string to search for common file in each patch folder
+    else:  # Epochs will be the same for train_ and val_ files since they are intentionally created at specific epochs
+        merged_img_file = os.path.join(merged_dir, pred_file.replace("pred", "pred_merged_img"))
     if not os.path.exists(merged_img_file):
         merged_img = np.full((x,y), np.nan, dtype=np.float64)
         np.save(merged_img_file, merged_img)
@@ -361,10 +371,20 @@ def stitchPatchMedian(logger, merged_dir, patch_list, pred_file, x, y, chunk_siz
 
         # Loop through each patch that overlaps with the chunk
         for idx, patch_id in enumerate(patch_to_chunks_id[chunk_id]):
-            patch_file = os.path.join("patch_"+f"{patch_id:04d}", "image_result", pred_file)
+            if "test_end_" in pred_file:  # Epochs will differ for test_end_ files
+                pattern = os.path.join("patch_"+f"{patch_id:05d}", "image_result", pred_file_common)
+                matched_files = glob.glob(pattern)
+                if len(matched_files) != 0:
+                    patch_file = matched_files[0]
+                else:
+                    logger.info(f"Patch file {pattern} not found and skipping.")
+                    continue
+            else:  # Epochs will be the same for train_ and val_ files since they are intentionally created at specific epochs
+                patch_file = os.path.join("patch_"+f"{patch_id:05d}", "image_result", pred_file)
 
             if os.path.exists(patch_file):
                 # Load data from patch file
+                logger.info(f"Patch file {patch_file} exists and is being stitched.")
                 patch_img = np.load(patch_file)
 
                 # Get the bounding box of the patch
@@ -386,7 +406,7 @@ def stitchPatchMedian(logger, merged_dir, patch_list, pred_file, x, y, chunk_siz
                 chunk_stack[ccx1:ccx2+1, ccy1:ccy2+1, idx] = patch_img[ppx1:ppx2+1, ppy1:ppy2+1]
             
             else:
-                logger.info(f"Patch file {patch_file} not found.")
+                logger.info(f"Patch file {patch_file} not found and skipping.")
 
         # Compute median of the 3D chunk array and output to the larger merged image
         merged_img[cx1:cx2+1, cy1:cy2+1] = np.nanmedian(chunk_stack, axis=2)
@@ -398,7 +418,7 @@ def stitchPatchMedian(logger, merged_dir, patch_list, pred_file, x, y, chunk_siz
      # Plot and save merged image once all chunks are processed
     plt.imshow(merged_img, cmap='gray', vmin=0, vmax=1)
     plt.colorbar()
-    save_path = os.path.join(merged_dir, pred_file[:-4].replace("pred", "pred_merged_img")+'.png')
+    save_path = os.path.join(merged_dir, merged_img_file[:-4]+'.png')
     plt.savefig(save_path)
     plt.close()
     logger.info(f"Saved merged image for {pred_file} to {save_path}")
