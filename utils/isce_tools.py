@@ -7,8 +7,10 @@ import xml.etree.ElementTree as ET
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 
+from evaluate_models_utils import evaluate_image_link_prediction_visualiser, evaluate_image_link_prediction_plot_distributions
 
-def readAmp(file,bbox):
+
+def readAmp(file,bbox=None):
     # TO-DO for CT: optimise reading binary file using bytes to avoid reading whole image into memory
     # bbox is in the form of [start_x, end_x, start_y, end_y]
     # Convention is x = length, y = width
@@ -18,8 +20,11 @@ def readAmp(file,bbox):
         data2 = data.reshape([length, width * 2])
         amp1 = data2[:, ::2]
         amp2 = data2[:, 1::2]
-    amp1 = amp1[bbox[0]:bbox[1]+1, bbox[2]:bbox[3]+1]
-    amp2 = amp2[bbox[0]:bbox[1]+1, bbox[2]:bbox[3]+1]
+    
+    # If bbox is provided, crop the coherence image to the specified bounding box
+    if bbox is not None:
+        amp1 = amp1[bbox[0]:bbox[1]+1, bbox[2]:bbox[3]+1]
+        amp2 = amp2[bbox[0]:bbox[1]+1, bbox[2]:bbox[3]+1]
 
     # Optionally disable plotting for batch processing
     # plt.imshow(amp1, cmap='gray', vmin=0, vmax=5)
@@ -42,7 +47,7 @@ def readAmp(file,bbox):
     return amp1, amp2
 
 
-def readCor(file,bbox):
+def readCor(file,bbox=None):
     # TO-DO for CT: optimise reading binary file using bytes to avoid reading whole image into memory
     # bbox is in the form of [start_x, end_x, start_y, end_y]
     # Convention is x = length, y = width
@@ -52,7 +57,10 @@ def readCor(file,bbox):
         data2 = data.reshape([length * 2, width])
         # Use the second band (odd rows) as the coherence (edge) feature
         cor = data2[1::2, :]
-    cor = cor[bbox[0]:bbox[1]+1, bbox[2]:bbox[3]+1]
+    
+    # If bbox is provided, crop the coherence image to the specified bounding box
+    if bbox is not None:
+        cor = cor[bbox[0]:bbox[1]+1, bbox[2]:bbox[3]+1]
 
     # Optionally disable plotting for batch processing
     # plt.imshow(cor, cmap='gray', vmin=0, vmax=5)
@@ -316,7 +324,7 @@ def stitchPatchMean(logger, merged_dir, patch_file, patch_bbox, patch_length):
     return merged_img, merged_wgt
 
 
-def stitchPatchMedian(logger, merged_dir, patch_list, pred_file, x, y, chunk_size):
+def stitchPatchMedian(logger, cor_logit, gt_dir, merged_dir, patch_list, pred_file, x, y, chunk_size):
 
     # Initialise merged image if it doesn't exist
     logger.info(f"Starting merging (median) for {pred_file}...")
@@ -416,10 +424,17 @@ def stitchPatchMedian(logger, merged_dir, patch_list, pred_file, x, y, chunk_siz
         np.save(merged_img_file, merged_img)
         logger.info(f"Updated merged image with chunk {chunk_id+1} in {merged_img_file}")
 
-     # Plot and save merged image once all chunks are processed
-    plt.imshow(merged_img, cmap='gray', vmin=0, vmax=1)
-    plt.colorbar()
-    save_path = os.path.join(merged_dir, merged_img_file[:-4]+'.png')
-    plt.savefig(save_path)
-    plt.close()
-    logger.info(f"Saved merged image for {pred_file} to {save_path}")
+    # Load ground truth image from original data directory
+    match = re.search(r'(\d{8})-(\d{8})', pred_file)
+    date1, date2 = match.groups() 
+    folder_path = os.path.join(gt_dir, f"cor_{date1}_{date2}")
+    base_filename = os.path.commonprefix([os.path.splitext(f)[0] for f in os.listdir(folder_path) if not f.startswith('.')])
+    if cor_logit == True:
+        gt_file = os.path.join(folder_path, base_filename + "_logit.cor")
+    else:
+        gt_file = os.path.join(folder_path, base_filename + ".cor")
+    gt_img = readCor(gt_file)
+    
+    # Plot visuals and distributions of merged image once all chunks are processed
+    evaluate_image_link_prediction_visualiser(logger, gt_img, merged_img, os.path.join(merged_dir, merged_img_file[:-4]+'_visual.png'))
+    evaluate_image_link_prediction_plot_distributions(logger, gt_img, merged_img, gt_img-merged_img, np.abs(gt_img-merged_img), os.path.join(merged_dir, merged_img_file[:-4]+'_distribution.png'))

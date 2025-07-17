@@ -500,7 +500,7 @@ if __name__ == "__main__":
                             
                         # UNCOMMENT FOR DEBUGGING: to visualize train results
                         # if epoch in [3,4,5,6,7,29] and train_window_idx[0] == 0:
-                        if epoch in [19]:
+                        if epoch in [29]:
                             os.makedirs(patch_dir + "/image_result", exist_ok=True)
                             for nbei, bei in enumerate(batch_edge_ids):
                                 # Get dates from node and edge mappings
@@ -563,7 +563,7 @@ if __name__ == "__main__":
                 distributions_flag = False
                 
                 # UNCOMMENT FOR DEBUGGING: Visualise and plot distributions of the validation results
-                if epoch in [19]:
+                if epoch in [29]:
                     visualize_flag = True
                     distributions_all_flag = True
                     distributions_flag = True
@@ -705,15 +705,15 @@ if __name__ == "__main__":
                         f'± {np.std([test_metric_single_run[metric_name] for test_metric_single_run in test_metric_all_runs], ddof=1):.4f}')
         
         # Stitch new patch to the merged image for each edge predicted using mean/min/max
-        if args.stitch_method == 'mean':
-            pred_dir = os.path.join(patch_dir, 'image_result')
-            for pred_file in sorted([f for f in os.listdir(pred_dir) if f.startswith("test_end_") and f.endswith("_pred.npy")]): 
-                stitchPatchMean(log_patch, merged_dir, pred_file, patch_bbox, args.patch_length)
-            # Check if the merged image was created successfully
-            if (merged_img_count := sum("pred_merged_img.npy" in f for f in os.listdir(merged_dir))):
-                log_main.info(f'Stitched all patches using the {args.stitch_method.upper()} method to create {merged_img_count} merged image(s) in {merged_dir}\n\n')
-            else:
-                log_main.warning(f'WARNING: No merged image created in {merged_dir} using the {args.stitch_method.upper()} method. Please check the patch result directories.\n\n')
+        # if args.stitch_method == 'mean':
+        #     pred_dir = os.path.join(patch_dir, 'image_result')
+        #     for pred_file in sorted([f for f in os.listdir(pred_dir) if f.startswith("test_end_") and f.endswith("_pred.npy")]): 
+        #         stitchPatchMean(log_patch, merged_dir, pred_file, patch_bbox, args.patch_length)
+        #     # Check if the merged image was created successfully
+        #     if (merged_img_count := sum("pred_merged_img.npy" in f for f in os.listdir(merged_dir))):
+        #         log_main.info(f'Stitched all patches using the {args.stitch_method.upper()} method to create {merged_img_count} merged image(s) in {merged_dir}\n\n')
+        #     else:
+        #         log_main.warning(f'WARNING: No merged image created in {merged_dir} using the {args.stitch_method.upper()} method. Please check the patch result directories.\n\n')
 
         os.chdir(work_dir)
 
@@ -721,11 +721,11 @@ if __name__ == "__main__":
     if args.stitch_method == 'median':
         patch_dirs = sorted([d for d in os.listdir(".") if os.path.isdir(d) and re.match(r"patch_\d{5}$", d)])  # Get list of all patch folders
         for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("train_") and f.endswith("_pred.npy")]): # Get unique train _pred.npy files from the first patch folder as a reference
-            stitchPatchMedian(log_main, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
+            stitchPatchMedian(log_main, args.cor_logit, data_dir, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
         for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("val_") and f.endswith("_pred.npy")]): # Get unique val _pred.npy files from the first patch folder as a reference
-            stitchPatchMedian(log_main, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
+            stitchPatchMedian(log_main, args.cor_logit, data_dir, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
         for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("test_end_") and f.endswith("_pred.npy")]): # Get unique test _pred.npy files from the first patch folder as a reference
-            stitchPatchMedian(log_main, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
+            stitchPatchMedian(log_main, args.cor_logit, data_dir, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
         # Check if the merged image was created successfully
         if (merged_img_count := sum("pred_merged_img.npy" in f for f in os.listdir(merged_dir))):
             log_main.info(f'Stitched all patches using the {args.stitch_method.upper()} method to create {merged_img_count} merged image(s) in {merged_dir}\n\n')
