@@ -31,6 +31,7 @@ get_link_prediction_image_data_split_by_nodes, load_edge_node_pairs, get_sliding
 from utils.temporal_shifting import find_furthest_node_within_temporal_baseline
 from utils.EarlyStopping import EarlyStopping
 from utils.load_configs import get_link_prediction_args
+from utils.cor_logit_space import cor_to_logit, logit_to_cor, convert_images_to_reg_cor
                                 
 
 if __name__ == "__main__":
@@ -99,11 +100,15 @@ if __name__ == "__main__":
     # Iterate over each image patch
     for patch_id, patch_bbox in enumerate(patchList):
         
-        # Debugging: run the patch only if it overlaps with the target area
-        # x1, x2, y1, y2 = patch_bbox
-        # target_x1, target_x2 = 650, 850
-        # target_y1, target_y2 = 20, 220
-        # if (x2 < target_x1 or x1 > target_x2 or y2 < target_y1 or y1 > target_y2):
+        # UNCOMMENT FOR DEBUGGING: Run the patch only if it overlaps with the target area.
+        x1, x2, y1, y2 = patch_bbox
+        target_x1, target_x2 = 650, 850
+        target_y1, target_y2 = 20, 220
+        if (x2 < target_x1 or x1 > target_x2 or y2 < target_y1 or y1 > target_y2):
+            continue
+
+        # # UNCOMMENT FOR DEBUGGING: Skip processing for certain patches. Only process selected patches in the list.
+        # if patch_id+1 not in [8]:
         #     continue
         
         # Create sub-directory for the patch
@@ -262,6 +267,8 @@ if __name__ == "__main__":
             
             # Storage arrays for validation and test metrics
             val_metrics, test_metrics = [], []
+            if args.cor_logit:
+                val_metrics_raw_cor, test_metrics_raw_cor = [], []
 
             ######### EPOCH LOOP #########
             for epoch in range(args.num_epochs):
@@ -287,6 +294,8 @@ if __name__ == "__main__":
 
                 # Storage arrays for train losses and metrics
                 train_losses, train_metrics = [], [] 
+                if args.cor_logit:
+                    train_losses_reg_cor, train_metrics_reg_cor = [], []  # For logit-transformed coherences
 
                 # Storage arrays for (1) train_data_indices (python indices for the training data), 
                 # and (2) number of edges in each training window. 
@@ -441,35 +450,84 @@ if __name__ == "__main__":
                         # predicted_edge_feature = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings).sigmoid()
                         # predicted_edge_feature = model[1](input_1=batch_src_node_embeddings, input_2=batch_dst_node_embeddings).clamp(min=0.0, max=1.0)
 
+                        # Ground truth edge feature
+                        gt_edge_feature = edge_raw_features[train_data_indices + 1]
+
                         # Acquire the residuals_full_object, where Residuals = (Ground Truth - Prediction)
-                        residuals_full_object = torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device) - predicted_edge_feature
+                        residuals_full_object = torch.tensor(gt_edge_feature, dtype=torch.float32, device = args.device) - predicted_edge_feature
+
+                        # If logit-transformed coherences are used, compute the ground truth, predictions, and residuals in the regular coherence space.
+                        # After computing, convert to PyTorch-compatible tensors.
+                        if args.cor_logit:
+
+                            gt_img_reg_cor, pred_img_reg_cor, residuals_img_reg_cor, abs_residuals_img_reg_cor = convert_images_to_reg_cor(gt_edge_feature, predicted_edge_feature.detach().cpu().numpy())
+                            gt_img_reg_cor = torch.tensor(gt_img_reg_cor, dtype=torch.float32, device=args.device)
+                            pred_img_reg_cor = torch.tensor(pred_img_reg_cor, dtype=torch.float32, device=args.device)
+                            residuals_img_reg_cor = torch.tensor(residuals_img_reg_cor, dtype=torch.float32, device=args.device)
+                            abs_residuals_img_reg_cor = torch.tensor(abs_residuals_img_reg_cor, dtype=torch.float32, device=args.device)
+
+                            # gt_regular_cor_equivalent = torch.tensor(logit_to_cor(gt_edge_feature), dtype=torch.float32, device=args.device)
+                            # pred_regular_cor_equivalent = torch.tensor(logit_to_cor(predicted_edge_feature.detach().cpu().numpy()), dtype=torch.float32, device=args.device)
+                            # residuals_regular_cor_equivalent = torch.tensor((gt_regular_cor_equivalent - pred_regular_cor_equivalent), dtype=torch.float32, device=args.device)
+                            # abs_residuals_regular_cor_equivalent = torch.tensor((np.abs(residuals_regular_cor_equivalent)), dtype=torch.float32, device=args.device)
 
                         # UNCOMMENT FOR DEBUGGING: Log the Ground Truth, Prediction, Residuals, and Absolute Residuals 
-                        log_patch.info(f"[TRAINING] GROUND TRUTH (Dimensions: {torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device).shape}): \n{torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device)}\n")
+                        log_patch.info(f"[TRAINING] GROUND TRUTH (Dimensions: {torch.tensor(gt_edge_feature, dtype=torch.float32, device = args.device).shape}): \n{torch.tensor(gt_edge_feature, dtype=torch.float32, device = args.device)}\n")
+                        if args.cor_logit:
+                            log_patch.info(f"[TRAINING] GROUND TRUTH (Raw Coherence) (Dimensions: {gt_img_reg_cor.shape}): \n{gt_img_reg_cor}\n")
                         log_patch.info(f"[TRAINING] PREDICTION (Dimensions: {predicted_edge_feature.shape}): \n{predicted_edge_feature}\n")
+                        if args.cor_logit:
+                            log_patch.info(f"[TRAINING] PREDICTION (Raw Coherence) (Dimensions: {pred_img_reg_cor.shape}): \n{pred_img_reg_cor}\n")
                         log_patch.info(f"[TRAINING] (GROUND TRUTH - PREDICTION) (Dimensions: {residuals_full_object.shape}): \n{residuals_full_object}\n")
+                        if args.cor_logit:
+                            log_patch.info(f"[TRAINING] (GROUND TRUTH - PREDICTION) (Raw Coherence) (Dimensions: {residuals_img_reg_cor.shape}): \n{residuals_img_reg_cor}\n")
                         log_patch.info(f"[TRAINING] abs(GROUND TRUTH - PREDICTION) (Dimensions: {residuals_full_object.abs().shape}): \n{residuals_full_object.abs()}\n")
+                        if args.cor_logit:
+                            log_patch.info(f"[TRAINING] abs(GROUND TRUTH - PREDICTION) (Raw Coherence) (Dimensions: {abs_residuals_img_reg_cor.shape}): \n{abs_residuals_img_reg_cor}\n")
 
-                        # Log the training result statistics
-                        quantiles = torch.tensor([0.00, 0.01, 0.25, 0.5, 0.75, 0.99, 1.00], device=args.device)
-                        log_patch.info(f"\n"
-                                       f"[TRAINING] STATISTICS\n"
-                                       f"[ MIN | 1st | 25th | 50th | 75th | 99th | MAX ]\n"
-                                       f"GROUND TRUTH Percentiles: \n"
-                                       f"{[round(v, 5) for v in torch.quantile(torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device).flatten(), quantiles).tolist()]}\n"
-                                       f"PREDICTION Percentiles: \n"
-                                       f"{[round(v, 5) for v in torch.quantile(predicted_edge_feature.flatten(), quantiles).tolist()]}\n"
-                                       f"LOSS Percentiles: \n"
-                                       f"{[round(v, 5) for v in torch.quantile(residuals_full_object.flatten(), quantiles).tolist()]}\n"
-                                       f"abs(LOSS) Percentiles: \n"
-                                       f"{[round(v, 5) for v in torch.quantile(residuals_full_object.abs().flatten(), quantiles).tolist()]}\n")
+                        # # Log the training result statistics, depending on whether logit-transformed coherences are used 
+                        # quantiles = torch.tensor([0.00, 0.01, 0.25, 0.5, 0.75, 0.99, 1.00], device=args.device)
+                        # if args.cor_logit:
+                        #     log_patch.info(f"\n"
+                        #                 f"[TRAINING] STATISTICS\n"
+                        #                 f"[ MIN | 1st | 25th | 50th | 75th | 99th | MAX ]\n"
+                        #                 f"GROUND TRUTH (Logit-Transformed Coherence) Percentiles: \n"
+                        #                 f"{[round(v, 5) for v in torch.quantile(torch.tensor(gt_edge_feature, dtype=torch.float32, device = args.device).flatten(), quantiles).tolist()]}\n"\
+                        #                 f"GROUND TRUTH (Raw Coherence) Percentiles: \n"
+                        #                 f"{[round(v, 5) for v in torch.quantile(gt_img_reg_cor.flatten(), quantiles).tolist()]}\n"                                       
+                        #                 f"PREDICTION (Logit-Transformed Coherence) Percentiles: \n"
+                        #                 f"{[round(v, 5) for v in torch.quantile(predicted_edge_feature.flatten(), quantiles).tolist()]}\n"
+                        #                 f"PREDICTION (Raw Coherence) Percentiles: \n"
+                        #                 f"{[round(v, 5) for v in torch.quantile(pred_img_reg_cor.flatten(), quantiles).tolist()]}\n"
+                        #                 f"(GROUND TRUTH - PREDICTION) (Logit-Transformed Coherence) Percentiles: \n"
+                        #                 f"{[round(v, 5) for v in torch.quantile(residuals_full_object.flatten(), quantiles).tolist()]}\n"
+                        #                 f"(GROUND TRUTH - PREDICTION) (Raw Coherence) Percentiles: \n"
+                        #                 f"{[round(v, 5) for v in torch.quantile(residuals_img_reg_cor.flatten(), quantiles).tolist()]}\n"
+                        #                 f"abs(GROUND TRUTH - PREDICTION) (Logit-Transformed Coherence) Percentiles: \n"
+                        #                 f"{[round(v, 5) for v in torch.quantile(residuals_full_object.abs().flatten(), quantiles).tolist()]}\n"
+                        #                 f"abs(GROUND TRUTH - PREDICTION) (Raw Coherence) Percentiles: \n"
+                        #                 f"{[round(v, 5) for v in torch.quantile(abs_residuals_img_reg_cor.flatten(), quantiles).tolist()]}\n")
+                        # else:
+                        #     log_patch.info(f"\n"
+                        #                 f"[TRAINING] STATISTICS\n"
+                        #                 f"[ MIN | 1st | 25th | 50th | 75th | 99th | MAX ]\n"
+                        #                 f"GROUND TRUTH Percentiles: \n"
+                        #                 f"{[round(v, 5) for v in torch.quantile(torch.tensor(gt_edge_feature, dtype=torch.float32, device = args.device).flatten(), quantiles).tolist()]}\n"
+                        #                 f"PREDICTION Percentiles: \n"
+                        #                 f"{[round(v, 5) for v in torch.quantile(predicted_edge_feature.flatten(), quantiles).tolist()]}\n"
+                        #                 f"(GROUND TRUTH - PREDICTION) Percentiles: \n"
+                        #                 f"{[round(v, 5) for v in torch.quantile(residuals_full_object.flatten(), quantiles).tolist()]}\n"
+                        #                 f"abs(GROUND TRUTH - PREDICTION) Percentiles: \n"
+                        #                 f"{[round(v, 5) for v in torch.quantile(residuals_full_object.abs().flatten(), quantiles).tolist()]}\n")
                         
                         # Compute the L1 loss (MAE) between the predicted edge feature and the ground truth edge feature
                         # Note that edge_raw_features shape is [total no. of edges in full dataset +1, no. of pixels in patch], 
                         # where +1 refers to the first row padded with zeros, so all data in edge_raw_features[0,] should be ignored,
                         # so we +1 to train_data_indices below
                         # train_loss here is computed as the L1 Loss (MAE) for the entire training window and returns a single value
-                        train_loss = torch.nn.functional.l1_loss(predicted_edge_feature, torch.tensor(edge_raw_features[train_data_indices + 1], dtype=torch.float32, device = args.device))
+                        train_loss = torch.nn.functional.l1_loss(predicted_edge_feature, torch.tensor(gt_edge_feature, dtype=torch.float32, device = args.device))
+                        if args.cor_logit:
+                            train_loss_reg_cor = torch.nn.functional.l1_loss(pred_img_reg_cor, gt_img_reg_cor)
 
                         # Apply loss regularisations (L1 / L2 / Elastic Net), if applicable
                         # Apply L1 Regularisation (Lasso), if applicable
@@ -500,33 +558,41 @@ if __name__ == "__main__":
                             
                         # UNCOMMENT FOR DEBUGGING: to visualize train results
                         # if epoch in [3,4,5,6,7,29] and train_window_idx[0] == 0:
-                        if epoch in [29]:
-                            os.makedirs(patch_dir + "/image_result", exist_ok=True)
-                            for nbei, bei in enumerate(batch_edge_ids):
-                                # Get dates from node and edge mappings
-                                src_node_id, dst_node_id = edge_node_pairs[bei-1]
-                                src_date = node_mapping.loc[node_mapping['nodeID'] == src_node_id, 'date'].values[0]
-                                dst_date = node_mapping.loc[node_mapping['nodeID'] == dst_node_id, 'date'].values[0]
-                                src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
-                                dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
-                                save_name = os.path.join(patch_dir, f"image_result/train_epoch-{epoch+1:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{bei:04d}_{src_date_str}-{dst_date_str}")
-                                # Save results
-                                gt_flat = edge_raw_features[bei,]
-                                gt_img = gt_flat.reshape((args.patch_length,args.patch_length))
-                                pred_flat = predicted_edge_feature[nbei,].detach().cpu().numpy()
-                                pred_img = pred_flat.reshape((args.patch_length,args.patch_length))
-                                np.save(save_name + "_gt.npy", gt_img)
-                                np.save(save_name + "_pred.npy", pred_img)
-                                # Visualise and plot distributions of results
-                                evaluate_image_link_prediction_visualiser(log_patch,gt_img,pred_img,save_name+"_visual.png")
-                                evaluate_image_link_prediction_plot_distributions(log_patch,gt_flat,pred_flat,gt_flat-pred_flat,np.abs(gt_flat-pred_flat),save_name+"_distributions.png")
+                        # if epoch in [4, 9, 14, 19, 24, 29, 39, 49, 59, 69, 79, 89, 99]:
+                        # if epoch in [29]:
+                        #     os.makedirs(patch_dir + "/image_result", exist_ok=True)
+                        #     for nbei, bei in enumerate(batch_edge_ids):
+                        #         # Get dates from node and edge mappings
+                        #         src_node_id, dst_node_id = edge_node_pairs[bei-1]
+                        #         src_date = node_mapping.loc[node_mapping['nodeID'] == src_node_id, 'date'].values[0]
+                        #         dst_date = node_mapping.loc[node_mapping['nodeID'] == dst_node_id, 'date'].values[0]
+                        #         src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
+                        #         dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
+                        #         save_name = os.path.join(patch_dir, f"image_result/train_epoch-{epoch+1:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{bei:04d}_{src_date_str}-{dst_date_str}")
+                        #         # Save results
+                        #         gt_flat = edge_raw_features[bei,]
+                        #         gt_img = gt_flat.reshape((args.patch_length,args.patch_length))
+                        #         pred_flat = predicted_edge_feature[nbei,].detach().cpu().numpy()
+                        #         pred_img = pred_flat.reshape((args.patch_length,args.patch_length))
+                        #         np.save(save_name + "_gt.npy", gt_img)
+                        #         np.save(save_name + "_pred.npy", pred_img)
+                        #         # Visualise and plot distributions of results
+                        #         evaluate_image_link_prediction_visualiser(log_patch,args.cor_logit,gt_img,pred_img,save_name)
+                        #         evaluate_image_link_prediction_plot_distributions(log_patch,args.cor_logit,gt_flat,pred_flat,gt_flat-pred_flat,np.abs(gt_flat-pred_flat),save_name)
                         
                         # Append losses to the storage arrays
                         train_losses.append(train_loss.item())
                         train_metrics.append({'Training MAE loss': train_loss.item()})
+                        if args.cor_logit and args.l1_regularisation_lambda == 0 and args.l2_regularisation_lambda == 0:
+                            train_losses_reg_cor.append(train_loss_reg_cor.item())
+                            train_metrics_reg_cor.append({'Training MAE loss (Raw Coherence)': train_loss_reg_cor.item()})
 
                         # Logging training loss for the specified training window
                         log_patch.info(f"TRAINING LOSS FOR PATCH {patch_id + 1:05d}, RUN {run + 1}, EPOCH {epoch + 1}, TRAINING WINDOW {train_window_idx[0] + 1}: {train_loss.item()}\n")
+                        if args.cor_logit and args.l1_regularisation_lambda == 0 and args.l2_regularisation_lambda == 0:
+                            log_patch.info(f"TRAINING LOSS (RAW COHERENCE EQUIVALENT) FOR PATCH {patch_id + 1:05d}, RUN {run + 1}, EPOCH {epoch + 1}, TRAINING WINDOW {train_window_idx[0] + 1}: {train_loss_reg_cor.item()}\n")
+                        elif args.cor_logit and (args.l1_regularisation_lambda != 0 or args.l2_regularisation_lambda != 0):
+                            log_patch.info(f"Not logging TRAINING LOSS (RAW COHERENCE EQUIVALENT) FOR PATCH {patch_id + 1:05d}, RUN {run + 1}, EPOCH {epoch + 1}, TRAINING WINDOW {train_window_idx[0] + 1} as loss regularisation was conducted in the logit space.")
 
                         optimizer.zero_grad()   # Set the gradients of parameters to zero before backpropagation
                         train_loss.backward()   # Backpropagation
@@ -563,10 +629,13 @@ if __name__ == "__main__":
                 distributions_flag = False
                 
                 # UNCOMMENT FOR DEBUGGING: Visualise and plot distributions of the validation results
-                if epoch in [29]:
+                # if epoch in [29]:
+                # if epoch in [0, 4, 9, 14, 19, 24, 29, 39, 49, 59, 69, 79, 89, 99]:
+                if epoch in [0, 9, 19, 29, 39, 49, 99, 149, 199, 249, 299, 349, 399, 449, 499]:
                     visualize_flag = True
                     distributions_all_flag = True
                     distributions_flag = True
+                    save_numpy_objects_flag = True
                     
                 # Validate as per normal without visualizing
                 val_metrics = evaluate_image_link_prediction_without_dataloader(logger=log_patch,
@@ -586,9 +655,11 @@ if __name__ == "__main__":
                                                                             time_gap=args.time_gap,
                                                                             l1_regularisation_lambda=args.l1_regularisation_lambda,
                                                                             l2_regularisation_lambda=args.l2_regularisation_lambda,
+                                                                            cor_logit=args.cor_logit,
                                                                             visualize=visualize_flag,
                                                                             distributions_all=distributions_all_flag,
                                                                             distributions=distributions_flag,
+                                                                            save_numpy_objects_flag=save_numpy_objects_flag,
                                                                             epoch=epoch+1)
                     
                 if args.model_name in ['JODIE', 'DyRep', 'TGN']:
@@ -644,9 +715,11 @@ if __name__ == "__main__":
                                                                             time_gap=args.time_gap,
                                                                             l1_regularisation_lambda=args.l1_regularisation_lambda,
                                                                             l2_regularisation_lambda=args.l2_regularisation_lambda,
+                                                                            cor_logit=args.cor_logit,
                                                                             visualize=True,
                                                                             distributions_all=True,
                                                                             distributions=True,
+                                                                            save_numpy_objects_flag=True,
                                                                             epoch=epoch+1)
 
             # exit(0)
@@ -720,12 +793,20 @@ if __name__ == "__main__":
     # Stitch all patches to create merged image for each edge predicted using median 
     if args.stitch_method == 'median':
         patch_dirs = sorted([d for d in os.listdir(".") if os.path.isdir(d) and re.match(r"patch_\d{5}$", d)])  # Get list of all patch folders
-        for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("train_") and f.endswith("_pred.npy")]): # Get unique train _pred.npy files from the first patch folder as a reference
+        for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("train_") and f.endswith("_pred_cor-raw.npy")]): # Get unique train _pred_cor-raw.npy files from the first patch folder as a reference
             stitchPatchMedian(log_main, args.cor_logit, data_dir, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
-        for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("val_") and f.endswith("_pred.npy")]): # Get unique val _pred.npy files from the first patch folder as a reference
+        for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("val_") and f.endswith("_pred_cor-raw.npy")]): # Get unique val _pred_cor-raw.npy files from the first patch folder as a reference
             stitchPatchMedian(log_main, args.cor_logit, data_dir, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
-        for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("test_end_") and f.endswith("_pred.npy")]): # Get unique test _pred.npy files from the first patch folder as a reference
+        for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("test_end_") and f.endswith("_pred_cor-raw.npy")]): # Get unique test _pred_cor-raw.npy files from the first patch folder as a reference
             stitchPatchMedian(log_main, args.cor_logit, data_dir, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
+        # Stitch additional logit_cor images if they were used
+        if args.cor_logit:
+            for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("train_") and f.endswith("_pred_cor-logit.npy")]): # Get unique train _pred_cor-logit.npy files from the first patch folder as a reference
+                stitchPatchMedian(log_main, args.cor_logit, data_dir, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
+            for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("val_") and f.endswith("_pred_cor-logit.npy")]): # Get unique val _pred_cor-logit.npy files from the first patch folder as a reference
+                stitchPatchMedian(log_main, args.cor_logit, data_dir, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
+            for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("test_end_") and f.endswith("_pred_cor-logit.npy")]): # Get unique test _pred_cor-logit.npy files from the first patch folder as a reference
+                stitchPatchMedian(log_main, args.cor_logit, data_dir, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
         # Check if the merged image was created successfully
         if (merged_img_count := sum("pred_merged_img.npy" in f for f in os.listdir(merged_dir))):
             log_main.info(f'Stitched all patches using the {args.stitch_method.upper()} method to create {merged_img_count} merged image(s) in {merged_dir}\n\n')

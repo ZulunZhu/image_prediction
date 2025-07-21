@@ -55,16 +55,25 @@ class MergeLayer(nn.Module):
         :param output_dim: int, dimension of the output
         """
         super().__init__()
+        
+        # UNCOMMENT FOR DEBUGGING: Increasing the number of hidden_dim
+        # hidden_dim = output_dim * 2
+
+        # Create intermediary layers + activation functions. By default we have fc1 and fc2, separated by an activation function to ensure non-linearity.
+        # UNCOMMENT FOR DEBUGGING: self.fc3, self.fc4, etc ... were added in to increase number of hidden layers.
         self.fc1 = nn.Linear(input_dim1 + input_dim2, hidden_dim)
-        self.fc2 = nn.Linear(hidden_dim, output_dim)
+        self.fc2 = nn.Linear(hidden_dim, output_dim)     # ORIGINAL
+        # self.fc2 = nn.Linear(hidden_dim, hidden_dim)
+        # self.fc3 = nn.Linear(hidden_dim, hidden_dim)
+        # self.fc4 = nn.Linear(hidden_dim, output_dim)
         self.act = nn.ReLU()
 
         # Sigmoid activation function with temperature scaling (y = 1 / (1 + e^(-x/temperature)))
         # Default sigmoid temperature is set to 1
         # If sigmoid temperature is set to < 1, it will make the sigmoid function steeper
         # If sigmoid temperature is set to > 1, it will make the sigmoid function gentler
-        sigmoid_temperature = 1
-        self.final_act = lambda x: torch.sigmoid(x / sigmoid_temperature)
+        # sigmoid_temperature = 1
+        # self.final_act = lambda x: torch.sigmoid(x / sigmoid_temperature)
 
         # self.final_act = nn.Sigmoid()   
         # self.final_act = lambda x: torch.clamp(x, min=0.0, max=1.0)
@@ -80,7 +89,8 @@ class MergeLayer(nn.Module):
         x = torch.cat([input_1, input_2], dim=1)
         
         # Tensor, shape (*, output_dim)
-        h = self.fc2(self.act(self.fc1(x)))
+        h = self.fc2(self.act(self.fc1(x)))    # ORIGINAL
+        # h = self.fc4(self.act(self.fc3(self.act(self.fc2(self.act(self.fc1(x)))))))     # 4 fully-connected layers
         # h = self.final_act(self.fc2(self.act(self.fc1(x))))
         
         return h

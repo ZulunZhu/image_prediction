@@ -12,7 +12,7 @@ import argparse
 import glob
 import re
 import numpy as np 
-from utils.isce_tools import sizeFromXml, readCor
+# from utils.isce_tools import sizeFromXml, readCor
 
 
 # Set up argparse
@@ -35,8 +35,47 @@ def cmdLineParse():
         return args
 
 
+def sizeFromXml(file):
+    fileXml = file + '.xml'
+    tree = ET.parse(fileXml)
+    root = tree.getroot()
+    width = int(root.find(".//property[@name='width']/value").text)
+    length = int(root.find(".//property[@name='length']/value").text)
+    return width, length   
+
+
+def readCor(file,bbox=None):
+    # TO-DO for CT: optimise reading binary file using bytes to avoid reading whole image into memory
+    # bbox is in the form of [start_x, end_x, start_y, end_y]
+    # Convention is x = length, y = width
+    width, length = sizeFromXml(file)
+    with open(file, 'rb') as f:
+        data = np.fromfile(f, dtype=np.float32)
+        data2 = data.reshape([length * 2, width])
+        # Use the second band (odd rows) as the coherence (edge) feature
+        cor = data2[1::2, :]
+    
+    # If bbox is provided, crop the coherence image to the specified bounding box
+    if bbox is not None:
+        cor = cor[bbox[0]:bbox[1]+1, bbox[2]:bbox[3]+1]
+
+    # Optionally disable plotting for batch processing
+    # plt.imshow(cor, cmap='gray', vmin=0, vmax=5)
+    # plt.colorbar(); plt.title("Cor 2"); plt.show()
+
+    # Check for the presence of pixels with NaN values in the coherence image 
+    # If any pixels with NaN values are present, assign them a value of "0"
+    nan_infill_value = 0
+    has_nan_cor = np.isnan(cor).any()
+    if has_nan_cor:
+        print(f"WARNING: Pixels with NaN values have been detected in the coherence image and were converted to {nan_infill_value}.")
+        cor = np.nan_to_num(cor, nan = nan_infill_value)
+
+    return cor
+
+
 # Coherence to logit space transformation
-def cor_to_logit(cor, eps=1e-4):
+def cor_to_logit(cor, eps=1e-10):
 
     # Clip squared coherence values into (0, 1) to avoid 0 and 1
     cor_squared = np.clip(np.square(cor), eps, 1 - eps)
@@ -82,6 +121,16 @@ def saveCor(width, length, cor, cor_ori):
         f.write(content)
 
 
+# Convert logit-transformed coherence images (GT, Pred) back to regular coherence space. 
+# Compute the residuals in reglar coherence space.
+def convert_images_to_reg_cor(gt_img_logit, pred_img_logit):
+    gt_img_reg_cor = logit_to_cor(gt_img_logit)
+    pred_img_reg_cor = logit_to_cor(pred_img_logit)
+    residuals_reg_cor = gt_img_reg_cor - pred_img_reg_cor
+    abs_residuals_reg_cor = np.abs(residuals_reg_cor)
+    return gt_img_reg_cor, pred_img_reg_cor, residuals_reg_cor, abs_residuals_reg_cor
+
+
 # Main script to convert coherences to logit space
 if __name__ == '__main__':
 
@@ -89,6 +138,7 @@ if __name__ == '__main__':
     inps = cmdLineParse()
 
     # Get list of coherence files
+    # Note for KZ: Check the nomenclature of the raw coherence files after processing the multi-temporal stack. The Glob / RegEx filter may require changes.
     glob_str = inps.in_dir + '/cor_????????_????????/b01_16r4alks.cor'
     cor_files = sorted(glob.glob(glob_str))
 

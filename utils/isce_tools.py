@@ -429,12 +429,12 @@ def stitchPatchMedian(logger, cor_logit, gt_dir, merged_dir, patch_list, pred_fi
     date1, date2 = match.groups() 
     folder_path = os.path.join(gt_dir, f"cor_{date1}_{date2}")
     base_filename = os.path.commonprefix([os.path.splitext(f)[0] for f in os.listdir(folder_path) if not f.startswith('.')])
-    if cor_logit == True:
+    if "logit" in pred_file:
         gt_file = os.path.join(folder_path, base_filename + "_logit.cor")
-    else:
+    elif "raw" in pred_file:
         gt_file = os.path.join(folder_path, base_filename + ".cor")
     gt_img = readCor(gt_file)
     
     # Plot visuals and distributions of merged image once all chunks are processed
-    evaluate_image_link_prediction_visualiser(logger, gt_img, merged_img, os.path.join(merged_dir, merged_img_file[:-4]+'_visual.png'))
-    evaluate_image_link_prediction_plot_distributions(logger, gt_img, merged_img, gt_img-merged_img, np.abs(gt_img-merged_img), os.path.join(merged_dir, merged_img_file[:-4]+'_distribution.png'))
+    evaluate_image_link_prediction_visualiser(logger, cor_logit, gt_img, merged_img, os.path.join(merged_dir, merged_img_file[:-4]))
+    evaluate_image_link_prediction_plot_distributions(logger, cor_logit, gt_img, merged_img, gt_img-merged_img, np.abs(gt_img-merged_img), os.path.join(merged_dir, merged_img_file[:-4]))
