@@ -310,8 +310,6 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                 src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
                 dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
 
-                breakpoint()
-
                 # Plot results
                 save_name = os.path.join(result_folder, f"{eval_stage}_epoch-{epoch:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}_distributions")
                 evaluate_image_link_prediction_plot_distributions(logger=logger,
