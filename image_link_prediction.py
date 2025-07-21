@@ -627,11 +627,11 @@ if __name__ == "__main__":
                 visualize_flag = False
                 distributions_all_flag = False
                 distributions_flag = False
+                save_numpy_objects_flag = False
                 
                 # UNCOMMENT FOR DEBUGGING: Visualise and plot distributions of the validation results
                 # if epoch in [29]:
-                # if epoch in [0, 4, 9, 14, 19, 24, 29, 39, 49, 59, 69, 79, 89, 99]:
-                if epoch in [0, 9, 19, 29, 39, 49, 99, 149, 199, 249, 299, 349, 399, 449, 499]:
+                if epoch in [0, 4, 9, 14, 19, 24, 29, 39, 49, 59, 69, 79, 89, 99]:
                     visualize_flag = True
                     distributions_all_flag = True
                     distributions_flag = True
