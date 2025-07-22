@@ -9,6 +9,7 @@ import time
 import argparse
 import os
 import json
+from multiprocessing import Pool, cpu_count
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FormatStrFormatter, MultipleLocator
 from matplotlib.gridspec import GridSpec
@@ -48,10 +49,10 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
                                                     l1_regularisation_lambda: float = 0.0,
                                                     l2_regularisation_lambda: float = 0.0,
                                                     cor_logit: bool = False,
+                                                    save_numpy_objects: bool = True,
                                                     visualize: bool = False,
-                                                    distributions_all: bool = True,
-                                                    distributions: bool = True,
-                                                    save_numpy_objects_flag = True,
+                                                    distributions: bool = False,
+                                                    distributions_all: bool = False,
                                                     epoch: int = 1):
     """
     Evaluate models on the link prediction task without requiring a data loader
@@ -153,9 +154,7 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
 
         # Compute the ground truth, predictions, and residuals for the equivalent of logit coherences in the normal coherence space
         if cor_logit:
-
             gt_img_reg_cor, pred_img_reg_cor, residuals_img_reg_cor, abs_residuals_img_reg_cor = convert_images_to_reg_cor(gt_edge_feature, positive_probabilities)
-           
             # gt_regular_cor_equivalent = logit_to_cor(edge_raw_features[edge_ids_array])
             # pred_regular_cor_equivalent = logit_to_cor(positive_probabilities)
             # residuals_regular_cor_equivalent = gt_regular_cor_equivalent - pred_regular_cor_equivalent
@@ -208,117 +207,108 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
         #                 f"{np.percentile(residuals_full_object, [0, 1, 25, 50, 75, 99, 100])}\n"
         #                 f"abs(GROUND TRUTH - PREDICTION) Percentiles: \n"
         #                 f"{np.percentile(np.abs(residuals_full_object), [0, 1, 25, 50, 75, 99, 100])}\n")
+        
+        # Create the output folder if it doesn't exist
+        result_folder = os.path.join(os.getcwd(), "image_result")
+        os.makedirs(result_folder, exist_ok=True)
+        use_parallel = cpu_count() > 99999  # Use smaller number e.g. 4 instead of 99999 to switch on multiprocessing
+        
+        # Get sizes 
+        n, L = positive_probabilities.shape
+        H = int(np.floor(np.sqrt(L)))
+        W = int(np.ceil(L / H))
+        
+        # Loop through each edge to get output filenames and optionally save NumPy objects
+        save_names = []
+        for i in range(n):
+            
+            # Get dates from node and edge mappings
+            edge_id = edge_ids_array[i]
+            src_node_id, dst_node_id = edge_node_pairs[edge_id-1]
+            src_date = node_mapping.loc[node_mapping['nodeID'] == src_node_id, 'date'].values[0]
+            dst_date = node_mapping.loc[node_mapping['nodeID'] == dst_node_id, 'date'].values[0]
+            src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
+            dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
+            save_names.append(os.path.join(result_folder, f"{eval_stage}_epoch-{epoch:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}"))
+
+            # Save results as NumPy objects
+            if save_numpy_objects: 
+                
+                # Reshape ground truth and prediction into 2D
+                gt_2d = reshape_to_2d(gt_edge_feature[i], H, W)
+                pred_2d = reshape_to_2d(positive_probabilities[i], H, W)
+                res_2d = reshape_to_2d(residuals_full_object[i], H, W)
+                abs_res_2d = reshape_to_2d(np.abs(residuals_full_object[i]), H, W)
+                if cor_logit:
+                    gt_2d_raw = reshape_to_2d(gt_img_reg_cor[i], H, W)
+                    pred_2d_raw = reshape_to_2d(pred_img_reg_cor[i], H, W)
+                    res_2d_raw = reshape_to_2d(residuals_img_reg_cor[i], H, W)
+                    abs_res_2d_raw = reshape_to_2d(abs_residuals_img_reg_cor[i], H, W)
+                
+                # If logit_cors is used, save the raw cor inside "if" loop, then save the logit cor outside "if" loop
+                # If logit_cors is not used, just save the raw cor outside "if" loop
+                coh_type = "raw"
+                if cor_logit:   
+                    np.save(save_names[i] + "_gt_cor-" + coh_type + ".npy", gt_2d_raw)
+                    np.save(save_names[i] + "_pred_cor-" + coh_type + ".npy", pred_2d_raw)
+                    np.save(save_names[i] + "_residual_cor-" + coh_type + ".npy", res_2d_raw)
+                    np.save(save_names[i] + "_residualabs_cor-" + coh_type + ".npy", abs_res_2d_raw)
+                    coh_type = "logit"
+                np.save(save_names[i] + "_gt_cor-" + coh_type + ".npy", gt_2d)
+                np.save(save_names[i] + "_pred_cor-" + coh_type + ".npy", pred_2d)
+                np.save(save_names[i] + "_residual_cor-" + coh_type + ".npy", res_2d)
+                np.save(save_names[i] + "_residualabs_cor-" + coh_type + ".npy", abs_res_2d)
 
         # Visualizing GT, Pred, Residuals, abs(Residuals)
         if visualize:
-            # Create the output folder if it doesn't exist
-            result_folder = os.path.join(os.getcwd(), "image_result")
-            os.makedirs(result_folder, exist_ok=True)
-
-            # Process prediction results
-            gt_embeddings = gt_edge_feature
-            pred_embeddings = positive_probabilities
-            
-            # Compute an approximate 2D shape for each flattened embedding
-            n, L = pred_embeddings.shape
-            H = int(np.floor(np.sqrt(L)))
-            W = int(np.ceil(L / H))
-
-            # Process each image
+            tasks = []
             for i in range(n):
-                # Get dates from node and edge mappings
-                edge_id = edge_ids_array[i]
-                src_node_id, dst_node_id = edge_node_pairs[edge_id-1]
-                src_date = node_mapping.loc[node_mapping['nodeID'] == src_node_id, 'date'].values[0]
-                dst_date = node_mapping.loc[node_mapping['nodeID'] == dst_node_id, 'date'].values[0]
-                src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
-                dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
-                save_name = os.path.join(result_folder, f"{eval_stage}_epoch-{epoch:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}")                  
-                
                 # Reshape ground truth and prediction into 2D
-                gt_2d = reshape_to_2d(gt_embeddings[i], H, W)
-                pred_2d = reshape_to_2d(pred_embeddings[i], H, W)
-                residual_2d = gt_2d - pred_2d
-                abs_residual_2d = np.abs(residual_2d)
-
-                # Visualize results 
-                evaluate_image_link_prediction_visualiser(logger, cor_logit, gt_2d, pred_2d, save_name)
-
-                # Save results as Numpy objects
-                if save_numpy_objects_flag:
-
-                    # Save results as Numpy objects (if logit_cors used, otherwise skip to saving for regular cors)
-                    if cor_logit:
-                        save_numpy_objects(cor_logit==True, gt_2d, pred_2d, residual_2d, abs_residual_2d, save_name)
-
-                        # Overwrite the variable names for the 2d objects for saving the regular cor variants of the Numpy objects
-                        gt_2d = reshape_to_2d(gt_img_reg_cor[i], H, W)
-                        pred_2d = reshape_to_2d(pred_img_reg_cor[i], H, W)
-                        residual_2d = reshape_to_2d(residuals_img_reg_cor[i], H, W)
-                        abs_residual_2d = reshape_to_2d(abs_residuals_img_reg_cor[i], H, W)
-
-                    # Save results as Numpy objects (for regular cors). Coerce cor_logit==False.
-                    save_numpy_objects(cor_logit==False, gt_2d, pred_2d, residual_2d, abs_residual_2d, save_name)
+                gt_2d = reshape_to_2d(gt_edge_feature[i], H, W)
+                pred_2d = reshape_to_2d(positive_probabilities[i], H, W)
+                save_name = save_names[i]
+                if use_parallel:  # If many CPUs are available, create tuple for multiprocessing
+                    tasks.append((logger, cor_logit, gt_2d, pred_2d, save_name))
+                else:  # If only few CPUs are available, use sequential processing
+                    evaluate_image_link_prediction_visualiser(logger, cor_logit, gt_2d, pred_2d, save_name)
+            if use_parallel:  # If many CPUs are available, use parallel processing
+                with Pool(cpu_count()) as pool:
+                    pool.starmap(evaluate_image_link_prediction_visualiser, tasks)
+                
+        # Plot distributions of each individual edge in the epoch for GT, Pred, Residuals, abs(Residuals)
+        if distributions:
+            tasks = []
+            for i in range(n):
+                # Flatten the GT, Pred, Residuals, abs(Residuals) objects for each edge for distribution plotting
+                gt_flat = gt_edge_feature[i].flatten()
+                pred_flat = positive_probabilities[i].flatten()
+                res_flat = residuals_full_object[i].flatten()
+                abs_res_flat = np.abs(residuals_full_object)[i].flatten()
+                save_name = save_names[i]
+                if use_parallel:  # If many CPUs are available, create tuple for multiprocessing
+                    tasks.append((logger, cor_logit, gt_flat, pred_flat, res_flat, abs_res_flat, save_name))
+                else:  # If only few CPUs are available, use sequential processing
+                    evaluate_image_link_prediction_plot_distributions(logger, cor_logit, gt_flat, pred_flat, res_flat, abs_res_flat, save_name)
+            if use_parallel:  # If many CPUs are available, use parallel processing
+                with Pool(cpu_count()) as pool:
+                    pool.starmap(evaluate_image_link_prediction_plot_distributions, tasks)
 
         # Plot distributions of all edges collectively in the epoch for GT, Pred, Residuals, abs(Residuals)
         if distributions_all:
-
-            # Create the output folder if it doesn't exist
-            result_folder = os.path.join(os.getcwd(), "image_result")
-            os.makedirs(result_folder, exist_ok=True)
-
             # Flatten the GT, Pred, Residuals, abs(Residuals) objects for distribution plotting
-            gt_dist_flat = gt_edge_feature.flatten()
-            pred_dist_flat = positive_probabilities.flatten()
-            residuals_dist_flat = residuals_full_object.flatten()
-            abs_residuals_dist_flat = np.abs(residuals_full_object).flatten()
-
+            gt_flat = gt_edge_feature.flatten()
+            pred_flat = positive_probabilities.flatten()
+            res_flat = residuals_full_object.flatten()
+            abs_res_flat = np.abs(residuals_full_object).flatten()
             # Plot results
             save_name = os.path.join(result_folder, f"{eval_stage}_epoch-{epoch:04d}_all-edges_distributions")
             evaluate_image_link_prediction_plot_distributions(logger=logger,
                                                               cor_logit=cor_logit,
-                                                              gt_img=gt_dist_flat,
-                                                              pred_img=pred_dist_flat,
-                                                              residuals_img=residuals_dist_flat,
-                                                              abs_residuals_img=abs_residuals_dist_flat,
-                                                              save_name=save_name)
-        
-        # Plot distributions of each individual edge in the epoch for GT, Pred, Residuals, abs(Residuals)
-        if distributions:
-            
-            # Create the output folder if it doesn't exist
-            result_folder = os.path.join(os.getcwd(), "image_result")
-            os.makedirs(result_folder, exist_ok=True)
-            
-            # Get the num_edges and relevant node and date information for each edge
-            num_edges = positive_probabilities.shape[0]
-
-            # Iterate through the individual edges
-            for i in range(num_edges):
-
-                # Flatten the GT, Pred, Residuals, abs(Residuals) objects for each edge for distribution plotting
-                gt_edge_dist_flat = gt_edge_feature[i].flatten()
-                pred_edge_dist_flat = positive_probabilities[i].flatten()
-                residuals_edge_dist_flat = residuals_full_object[i].flatten()
-                abs_residuals_edge_dist_flat = np.abs(residuals_full_object)[i].flatten()
-
-                # Get dates from node and edge mappings
-                edge_id = edge_ids_array[i]
-                src_node_id, dst_node_id = edge_node_pairs[edge_id-1]
-                src_date = node_mapping.loc[node_mapping['nodeID'] == src_node_id, 'date'].values[0]
-                dst_date = node_mapping.loc[node_mapping['nodeID'] == dst_node_id, 'date'].values[0]
-                src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
-                dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
-
-                # Plot results
-                save_name = os.path.join(result_folder, f"{eval_stage}_epoch-{epoch:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{edge_ids_array[i]:04d}_{src_date_str}-{dst_date_str}_distributions")
-                evaluate_image_link_prediction_plot_distributions(logger=logger,
-                                                                  cor_logit=cor_logit,
-                                                                  gt_img=gt_edge_dist_flat,
-                                                                  pred_img=pred_edge_dist_flat,
-                                                                  residuals_img=residuals_edge_dist_flat,
-                                                                  abs_residuals_img=abs_residuals_edge_dist_flat,
-                                                                  save_name=save_name)            
+                                                              gt_img=gt_flat,
+                                                              pred_img=pred_flat,
+                                                              residuals_img=res_flat,
+                                                              abs_residuals_img=abs_res_flat,
+                                                              save_name=save_name)   
 
         # Compute loss (using MAE / L1 loss here)
         loss = np.mean(np.abs(gt_edge_feature - positive_probabilities))
@@ -358,7 +348,177 @@ def evaluate_image_link_prediction_without_dataloader(logger: str,
     return evaluate_metrics
 
 
-# Visualise the distributions of the ground truth, predictions, and residuals
+def evaluate_image_link_prediction_visualiser(logger, cor_logit, gt_img, pred_img, save_name):
+
+    # Calculate residuals (agnostic to logit-transformed or raw coherences) from the gt_img and pred_img supplied.
+    residuals_img = gt_img - pred_img
+    abs_residuals_img = np.abs(residuals_img)
+    
+    # Compute statistics & create visualisation plots for logit-transformed coherences
+    if cor_logit:
+
+        # Get the save_path (for logit_cors)
+        save_path = save_name + "_visual_cor-logit.png"
+
+        # Compute the equivalents for logit-transformed coherences in regular coherence space using "convert_images_to_reg_cor" function
+        gt_img_reg_cor, pred_img_reg_cor, residuals_img_reg_cor, abs_residuals_img_reg_cor = convert_images_to_reg_cor(gt_img, pred_img)
+
+        # # Print result statistics for logit-transformed coherences     
+        # logger.info(f"\n"
+        #             f"STATISTICS for: {save_path}\n"
+        #             f"[ MIN | 1st | 25th | 50th | 75th | 99th | MAX ]\n"
+        #             f"GROUND TRUTH (Logit-Transformed Coherence) Percentiles: \n"
+        #             f"{np.percentile(gt_img, [0, 1, 25, 50, 75, 99, 100])}\n"
+        #             f"GROUND TRUTH (Raw Coherence) Percentiles: \n"
+        #             f"{np.percentile(gt_img_reg_cor, [0, 1, 25, 50, 75, 99, 100])}\n"
+        #             f"PREDICTION (Logit-Transformed Coherence) Percentiles: \n"
+        #             f"{np.percentile(pred_img, [0, 1, 25, 50, 75, 99, 100])}\n"
+        #             f"PREDICTION (Raw Coherence) Percentiles: \n"
+        #             f"{np.percentile(pred_img_reg_cor, [0, 1, 25, 50, 75, 99, 100])}\n"
+        #             f"(GROUND TRUTH - PREDICTION) (Logit-Transformed Coherence) Percentiles: \n"
+        #             f"{np.percentile(residuals_img, [0, 1, 25, 50, 75, 99, 100])}\n"
+        #             f"(GROUND TRUTH - PREDICTION) (Raw Coherence) Percentiles: \n"
+        #             f"{np.percentile(residuals_img_reg_cor, [0, 1, 25, 50, 75, 99, 100])}\n"
+        #             f"abs(GROUND TRUTH - PREDICTION) (Logit-Transformed Coherence) Percentiles: \n"
+        #             f"{np.percentile(abs_residuals_img, [0, 1, 25, 50, 75, 99, 100])}\n"
+        #             f"abs(GROUND TRUTH - PREDICTION) (Raw Coherence) Percentiles: \n"
+        #             f"{np.percentile(abs_residuals_img_reg_cor, [0, 1, 25, 50, 75, 99, 100])}\n")
+        
+        # Visualise the results: GT, Pred, Residuals, abs(Residuals) in a 2x2 subplot
+        fig, axs = plt.subplots(2, 2, figsize=(16, 16))
+
+        # General plotting configurations
+        title_fontsize = 24
+        cb_fontsize = 16
+        cb_shrink = 0.75
+        tick_label_fontsize = 16
+
+        # Hardcoded axes limits for logit-transformed coherences. Most logit-transformed coherence values fall between -6 to +6 in logit-space.
+        vmin = -6
+        vmax = 6
+        vmin_abs = 0.0
+        vmax_abs = 12.0
+        vmin_diff = -vmax_abs
+        vmax_diff = vmax_abs
+
+        # Ground Truth Image
+        im0 = axs[0,0].imshow(gt_img, cmap='gray', vmin=vmin, vmax=vmax)
+        axs[0,0].set_title("[Logit-Transformed Coherence]\nGround Truth", fontsize=title_fontsize)
+        axs[0,0].tick_params(labelsize=tick_label_fontsize)
+        cb0 = fig.colorbar(im0, ax=axs[0,0], shrink=cb_shrink)
+        cb0.ax.tick_params(labelsize=cb_fontsize)
+        cb0.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+        # Prediction Image
+        im1 = axs[0,1].imshow(pred_img, cmap='gray', vmin=vmin, vmax=vmax)
+        axs[0,1].set_title("[Logit-Transformed Coherence]\nPrediction", fontsize=title_fontsize)
+        axs[0,1].tick_params(labelsize=tick_label_fontsize)
+        cb1 = fig.colorbar(im1, ax=axs[0,1], shrink=cb_shrink)
+        cb1.ax.tick_params(labelsize=cb_fontsize)
+        cb1.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+        # (Ground Truth - Prediction) Image
+        im2 = axs[1,0].imshow(residuals_img, cmap='seismic', vmin=vmin_diff, vmax=vmax_diff)
+        axs[1,0].set_title("[Logit-Transformed Coherence]\nGround Truth - Prediction", fontsize=title_fontsize)
+        axs[1,0].tick_params(labelsize=tick_label_fontsize)
+        cb2 = fig.colorbar(im2, ax=axs[1,0], shrink=cb_shrink)
+        cb2.ax.tick_params(labelsize=cb_fontsize)
+        cb2.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+        # abs(Ground Truth - Prediction) Image
+        cmap_white_red_darkred = mcolors.LinearSegmentedColormap.from_list('white_red', [(0, 'white'), (0.5, 'red'), (1, '#820000')])
+        im3 = axs[1,1].imshow(abs_residuals_img, cmap=cmap_white_red_darkred, vmin=vmin_abs, vmax=vmax_abs)
+        axs[1,1].set_title("[Logit-Transformed Coherence]\nabs(Ground Truth - Prediction)", fontsize=title_fontsize)
+        axs[1,1].tick_params(labelsize=tick_label_fontsize)
+        cb3 = fig.colorbar(im3, ax=axs[1,1], shrink=cb_shrink)
+        cb3.ax.tick_params(labelsize=cb_fontsize)
+        cb3.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+        # Save the figure
+        plt.tight_layout()
+        plt.savefig(save_path)
+        plt.close(fig)
+        logger.info(f"Saved prediction results to: \n{save_path}\n")
+
+        # Reassign the variables for GT, pred, residuals, and abs(residuals) for plotting raw cor images.
+        gt_img, pred_img, residuals_img, abs_residuals_img = gt_img_reg_cor, pred_img_reg_cor, residuals_img_reg_cor, abs_residuals_img_reg_cor
+            
+    ## Processing for regular (raw) coherences
+    
+    # Get the save_path for raw cors
+    save_path = save_name + "_visual_cor-raw.png"
+    
+    # # Compute statistics & create visualisation plots for raw coherences (or logit-transformed coherences converted back to regular coherence space)
+    # # Print result statistics for regular coherences               
+    # logger.info(f"\n"
+    #             f"STATISTICS for: {save_path}\n"
+    #             f"[ MIN | 1st | 25th | 50th | 75th | 99th | MAX ]\n"
+    #             f"GROUND TRUTH (Raw Coherence) Percentiles: \n"
+    #             f"{np.percentile(gt_img, [0, 1, 25, 50, 75, 99, 100])}\n"
+    #             f"PREDICTION (Raw Coherence) Percentiles: \n"
+    #             f"{np.percentile(pred_img, [0, 1, 25, 50, 75, 99, 100])}\n"
+    #             f"(GROUND TRUTH - PREDICTION) (Raw Coherence) Percentiles: \n"
+    #             f"{np.percentile(residuals_img, [0, 1, 25, 50, 75, 99, 100])}\n"
+    #             f"abs(GROUND TRUTH - PREDICTION) (Raw Coherence) Percentiles: \n"
+    #             f"{np.percentile(abs_residuals_img, [0, 1, 25, 50, 75, 99, 100])}\n")
+
+    # Visualise the results: GT, Pred, Residuals, abs(Residuals) in a 2x2 subplot
+    fig, axs = plt.subplots(2, 2, figsize=(16, 16))
+
+    # General plotting configurations
+    title_fontsize = 24
+    cb_fontsize = 16
+    cb_shrink = 0.75
+    tick_label_fontsize = 16
+
+    # Hardcoded axes limits for logit-transformed coherences
+    vmin = 0
+    vmax = 1
+    vmin_abs = 0
+    vmax_abs = 1
+    vmin_diff = -vmax_abs
+    vmax_diff = vmax_abs
+
+    # Ground Truth Image
+    im0 = axs[0,0].imshow(gt_img, cmap='gray', vmin=vmin, vmax=vmax)
+    axs[0,0].set_title("[Coherence]\nGround Truth", fontsize=title_fontsize)
+    axs[0,0].tick_params(labelsize=tick_label_fontsize)
+    cb0 = fig.colorbar(im0, ax=axs[0,0], shrink=cb_shrink)
+    cb0.ax.tick_params(labelsize=cb_fontsize)
+    cb0.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+    # Prediction Image
+    im1 = axs[0,1].imshow(pred_img, cmap='gray', vmin=vmin, vmax=vmax)
+    axs[0,1].set_title("[Coherence]\nPrediction", fontsize=title_fontsize)
+    axs[0,1].tick_params(labelsize=tick_label_fontsize)
+    cb1 = fig.colorbar(im1, ax=axs[0,1], shrink=cb_shrink)
+    cb1.ax.tick_params(labelsize=cb_fontsize)
+    cb1.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+    # (Ground Truth - Prediction) Image
+    im2 = axs[1,0].imshow(residuals_img, cmap='seismic', vmin=vmin_diff, vmax=vmax_diff)
+    axs[1,0].set_title("[Coherence]\nGround Truth - Prediction", fontsize=title_fontsize)
+    axs[1,0].tick_params(labelsize=tick_label_fontsize)
+    cb2 = fig.colorbar(im2, ax=axs[1,0], shrink=cb_shrink)
+    cb2.ax.tick_params(labelsize=cb_fontsize)
+    cb2.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+    # abs(Ground Truth - Prediction) Image
+    cmap_white_red_darkred = mcolors.LinearSegmentedColormap.from_list('white_red', [(0, 'white'), (0.5, 'red'), (1, '#820000')])
+    im3 = axs[1,1].imshow(abs_residuals_img, cmap=cmap_white_red_darkred, vmin=vmin_abs, vmax=vmax_abs)
+    axs[1,1].set_title("[Coherence]\nabs(Ground Truth - Prediction)", fontsize=title_fontsize)
+    axs[1,1].tick_params(labelsize=tick_label_fontsize)
+    cb3 = fig.colorbar(im3, ax=axs[1,1], shrink=cb_shrink)
+    cb3.ax.tick_params(labelsize=cb_fontsize)
+    cb3.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
+
+    # Save the figure
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close(fig)
+    logger.info(f"Saved prediction results to: \n{save_path}\n")
+
+
 def evaluate_image_link_prediction_plot_distributions(logger, cor_logit, gt_img, pred_img, residuals_img, abs_residuals_img, save_name):
 
     # Compute percentiles from input arrays
@@ -508,7 +668,7 @@ def evaluate_image_link_prediction_plot_distributions(logger, cor_logit, gt_img,
 
         # Save distribution plots
         plt.tight_layout()
-        save_path = save_name + "_cor-logit.png"
+        save_path = save_name + "_distributions_cor-logit.png"
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
         plt.savefig(save_path)
         plt.close()
@@ -654,220 +814,11 @@ def evaluate_image_link_prediction_plot_distributions(logger, cor_logit, gt_img,
 
     # Save distribution plots
     plt.tight_layout()
-    save_path = save_name + "_cor-raw.png"
+    save_path = save_name + "_distributions_cor-raw.png"
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.savefig(save_path)
     plt.close()
     logger.info(f"Saved distribution plots to: \n{save_path}\n")
-
-
-def evaluate_image_link_prediction_visualiser(logger, cor_logit, gt_img, pred_img, save_name):
-
-    # Calculate residuals (agnostic to logit-transformed or raw coherences) from the gt_img and pred_img supplied.
-    residuals_img = gt_img - pred_img
-    abs_residuals_img = np.abs(residuals_img)
-    
-    # Function to highlight differences between gt_img and pred_img.
-    # Currently, this function is not in use, but is retained for redundancy.
-    def highlight_differences(pred_img, gt_img, threshold=0.1):
-        """
-        Highlights pixels in pred_img that differ from gt_img by more than 'threshold'
-        in red. Returns an RGB array.
-        """
-        # Uncomment this line for the original code where differenced image is coerced to np.int16
-        # diff = np.abs(pred_img.astype(np.int16) - gt_img.astype(np.int16))
-        diff = np.abs(gt_img - pred_img)
-        
-        # Convert the predicted image to RGB
-        rgb = np.stack([pred_img, pred_img, pred_img], axis=-1)
-        mask = diff > threshold
-        rgb[mask] = np.array([255, 0, 0], dtype=np.uint8)
-        return rgb
-    
-    # Compute statistics & create visualisation plots for logit-transformed coherences
-    if cor_logit:
-
-        # Get the save_path (for logit_cors)
-        save_path = save_name + "_visual_cor-logit.png"
-
-        # Compute the equivalents for logit-transformed coherences in regular coherence space using "convert_images_to_reg_cor" function
-        gt_img_reg_cor, pred_img_reg_cor, residuals_img_reg_cor, abs_residuals_img_reg_cor = convert_images_to_reg_cor(gt_img, pred_img)
-
-        # # Print result statistics for logit-transformed coherences     
-        # logger.info(f"\n"
-        #             f"STATISTICS for: {save_path}\n"
-        #             f"[ MIN | 1st | 25th | 50th | 75th | 99th | MAX ]\n"
-        #             f"GROUND TRUTH (Logit-Transformed Coherence) Percentiles: \n"
-        #             f"{np.percentile(gt_img, [0, 1, 25, 50, 75, 99, 100])}\n"
-        #             f"GROUND TRUTH (Raw Coherence) Percentiles: \n"
-        #             f"{np.percentile(gt_img_reg_cor, [0, 1, 25, 50, 75, 99, 100])}\n"
-        #             f"PREDICTION (Logit-Transformed Coherence) Percentiles: \n"
-        #             f"{np.percentile(pred_img, [0, 1, 25, 50, 75, 99, 100])}\n"
-        #             f"PREDICTION (Raw Coherence) Percentiles: \n"
-        #             f"{np.percentile(pred_img_reg_cor, [0, 1, 25, 50, 75, 99, 100])}\n"
-        #             f"(GROUND TRUTH - PREDICTION) (Logit-Transformed Coherence) Percentiles: \n"
-        #             f"{np.percentile(residuals_img, [0, 1, 25, 50, 75, 99, 100])}\n"
-        #             f"(GROUND TRUTH - PREDICTION) (Raw Coherence) Percentiles: \n"
-        #             f"{np.percentile(residuals_img_reg_cor, [0, 1, 25, 50, 75, 99, 100])}\n"
-        #             f"abs(GROUND TRUTH - PREDICTION) (Logit-Transformed Coherence) Percentiles: \n"
-        #             f"{np.percentile(abs_residuals_img, [0, 1, 25, 50, 75, 99, 100])}\n"
-        #             f"abs(GROUND TRUTH - PREDICTION) (Raw Coherence) Percentiles: \n"
-        #             f"{np.percentile(abs_residuals_img_reg_cor, [0, 1, 25, 50, 75, 99, 100])}\n")
-        
-        # Visualise the results: GT, Pred, Residuals, abs(Residuals) in a 2x2 subplot
-        fig, axs = plt.subplots(2, 2, figsize=(16, 16))
-
-        # General plotting configurations
-        title_fontsize = 24
-        cb_fontsize = 16
-        cb_shrink = 0.75
-        tick_label_fontsize = 16
-
-        # Hardcoded axes limits for logit-transformed coherences. Most logit-transformed coherence values fall between -6 to +6 in logit-space.
-        vmin = -6
-        vmax = 6
-        vmin_abs = 0.0
-        vmax_abs = 12.0
-        vmin_diff = -vmax_abs
-        vmax_diff = vmax_abs
-
-        # Ground Truth Image
-        im0 = axs[0,0].imshow(gt_img, cmap='gray', vmin=vmin, vmax=vmax)
-        axs[0,0].set_title("[Logit-Transformed Coherence]\nGround Truth", fontsize=title_fontsize)
-        axs[0,0].tick_params(labelsize=tick_label_fontsize)
-        cb0 = fig.colorbar(im0, ax=axs[0,0], shrink=cb_shrink)
-        cb0.ax.tick_params(labelsize=cb_fontsize)
-        cb0.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
-
-        # Prediction Image
-        im1 = axs[0,1].imshow(pred_img, cmap='gray', vmin=vmin, vmax=vmax)
-        axs[0,1].set_title("[Logit-Transformed Coherence]\nPrediction", fontsize=title_fontsize)
-        axs[0,1].tick_params(labelsize=tick_label_fontsize)
-        cb1 = fig.colorbar(im1, ax=axs[0,1], shrink=cb_shrink)
-        cb1.ax.tick_params(labelsize=cb_fontsize)
-        cb1.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
-
-        # (Ground Truth - Prediction) Image
-        im2 = axs[1,0].imshow(residuals_img, cmap='seismic', vmin=vmin_diff, vmax=vmax_diff)
-        axs[1,0].set_title("[Logit-Transformed Coherence]\nGround Truth - Prediction", fontsize=title_fontsize)
-        axs[1,0].tick_params(labelsize=tick_label_fontsize)
-        cb2 = fig.colorbar(im2, ax=axs[1,0], shrink=cb_shrink)
-        cb2.ax.tick_params(labelsize=cb_fontsize)
-        cb2.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
-
-        # abs(Ground Truth - Prediction) Image
-        cmap_white_red_darkred = mcolors.LinearSegmentedColormap.from_list('white_red', [(0, 'white'), (0.5, 'red'), (1, '#820000')])
-        im3 = axs[1,1].imshow(abs_residuals_img, cmap=cmap_white_red_darkred, vmin=vmin_abs, vmax=vmax_abs)
-        axs[1,1].set_title("[Logit-Transformed Coherence]\nabs(Ground Truth - Prediction)", fontsize=title_fontsize)
-        axs[1,1].tick_params(labelsize=tick_label_fontsize)
-        cb3 = fig.colorbar(im3, ax=axs[1,1], shrink=cb_shrink)
-        cb3.ax.tick_params(labelsize=cb_fontsize)
-        cb3.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
-
-        # Save the figure
-        plt.tight_layout()
-        plt.savefig(save_path)
-        plt.close(fig)
-        logger.info(f"Saved prediction results to: \n{save_path}\n")
-
-        # Reassign the variables for GT, pred, residuals, and abs(residuals) for plotting raw cor images.
-        gt_img, pred_img, residuals_img, abs_residuals_img = gt_img_reg_cor, pred_img_reg_cor, residuals_img_reg_cor, abs_residuals_img_reg_cor
-            
-    ## Processing for regular (raw) coherences
-    
-    # Get the save_path for raw cors
-    save_path = save_name + "_visual_cor-raw.png"
-    
-    # # Compute statistics & create visualisation plots for raw coherences (or logit-transformed coherences converted back to regular coherence space)
-    # # Print result statistics for regular coherences               
-    # logger.info(f"\n"
-    #             f"STATISTICS for: {save_path}\n"
-    #             f"[ MIN | 1st | 25th | 50th | 75th | 99th | MAX ]\n"
-    #             f"GROUND TRUTH (Raw Coherence) Percentiles: \n"
-    #             f"{np.percentile(gt_img, [0, 1, 25, 50, 75, 99, 100])}\n"
-    #             f"PREDICTION (Raw Coherence) Percentiles: \n"
-    #             f"{np.percentile(pred_img, [0, 1, 25, 50, 75, 99, 100])}\n"
-    #             f"(GROUND TRUTH - PREDICTION) (Raw Coherence) Percentiles: \n"
-    #             f"{np.percentile(residuals_img, [0, 1, 25, 50, 75, 99, 100])}\n"
-    #             f"abs(GROUND TRUTH - PREDICTION) (Raw Coherence) Percentiles: \n"
-    #             f"{np.percentile(abs_residuals_img, [0, 1, 25, 50, 75, 99, 100])}\n")
-    
-    # Compute difference image
-    # diff_img = highlight_differences(pred_img, gt_img, threshold=0.1)
-
-    # Visualise the results: GT, Pred, Residuals, abs(Residuals) in a 2x2 subplot
-    fig, axs = plt.subplots(2, 2, figsize=(16, 16))
-
-    # General plotting configurations
-    title_fontsize = 24
-    cb_fontsize = 16
-    cb_shrink = 0.75
-    tick_label_fontsize = 16
-
-    # Hardcoded axes limits for logit-transformed coherences
-    vmin = 0
-    vmax = 1
-    vmin_abs = 0
-    vmax_abs = 1
-    vmin_diff = -vmax_abs
-    vmax_diff = vmax_abs
-
-    # Ground Truth Image
-    im0 = axs[0,0].imshow(gt_img, cmap='gray', vmin=vmin, vmax=vmax)
-    axs[0,0].set_title("[Coherence]\nGround Truth", fontsize=title_fontsize)
-    axs[0,0].tick_params(labelsize=tick_label_fontsize)
-    cb0 = fig.colorbar(im0, ax=axs[0,0], shrink=cb_shrink)
-    cb0.ax.tick_params(labelsize=cb_fontsize)
-    cb0.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
-
-    # Prediction Image
-    im1 = axs[0,1].imshow(pred_img, cmap='gray', vmin=vmin, vmax=vmax)
-    axs[0,1].set_title("[Coherence]\nPrediction", fontsize=title_fontsize)
-    axs[0,1].tick_params(labelsize=tick_label_fontsize)
-    cb1 = fig.colorbar(im1, ax=axs[0,1], shrink=cb_shrink)
-    cb1.ax.tick_params(labelsize=cb_fontsize)
-    cb1.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
-
-    # (Ground Truth - Prediction) Image
-    im2 = axs[1,0].imshow(residuals_img, cmap='seismic', vmin=vmin_diff, vmax=vmax_diff)
-    axs[1,0].set_title("[Coherence]\nGround Truth - Prediction", fontsize=title_fontsize)
-    axs[1,0].tick_params(labelsize=tick_label_fontsize)
-    cb2 = fig.colorbar(im2, ax=axs[1,0], shrink=cb_shrink)
-    cb2.ax.tick_params(labelsize=cb_fontsize)
-    cb2.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
-
-    # abs(Ground Truth - Prediction) Image
-    cmap_white_red_darkred = mcolors.LinearSegmentedColormap.from_list('white_red', [(0, 'white'), (0.5, 'red'), (1, '#820000')])
-    im3 = axs[1,1].imshow(abs_residuals_img, cmap=cmap_white_red_darkred, vmin=vmin_abs, vmax=vmax_abs)
-    axs[1,1].set_title("[Coherence]\nabs(Ground Truth - Prediction)", fontsize=title_fontsize)
-    axs[1,1].tick_params(labelsize=tick_label_fontsize)
-    cb3 = fig.colorbar(im3, ax=axs[1,1], shrink=cb_shrink)
-    cb3.ax.tick_params(labelsize=cb_fontsize)
-    cb3.ax.yaxis.set_major_formatter(FormatStrFormatter('%.2f'))
-
-    # Save the figure
-    plt.tight_layout()
-    plt.savefig(save_path)
-    plt.close(fig)
-    logger.info(f"Saved prediction results to: \n{save_path}\n")
-
-
-# Save results as Numpy objects. Name the objects based on whether we are saving logit / raw versions.
-def save_numpy_objects(cor_logit, gt_img, pred_img, residuals_img, abs_residuals_img, save_name):
-
-    # Save results as Numpy objects if logit cors used
-    if cor_logit==True:
-        np.save(save_name + "_gt_cor-logit.npy", gt_img)
-        np.save(save_name + "_pred_cor-logit.npy", pred_img)
-        np.save(save_name + "_residual_cor-logit.npy", residuals_img)
-        np.save(save_name + "_residualabs_cor-logit.npy", abs_residuals_img)
-
-    elif cor_logit==False:
-        # Save results as Numpy objects if regular cors used
-        np.save(save_name + "_gt_cor-raw.npy", gt_img)
-        np.save(save_name + "_pred_cor-raw.npy", pred_img)
-        np.save(save_name + "_residual_cor-raw.npy", residuals_img)
-        np.save(save_name + "_residualabs_cor-raw.npy", abs_residuals_img)
 
 
 def evaluate_image_link_prediction(model_name: str, model: nn.Module, neighbor_sampler: NeighborSampler, evaluate_idx_data_loader: DataLoader, evaluate_data: Data, eval_stage: str,

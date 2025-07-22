@@ -10,6 +10,7 @@ import shutil
 import json
 import math
 import re
+from multiprocessing import Pool, cpu_count
 import torch
 import torch.nn as nn
 from sklearn.metrics import average_precision_score, roc_auc_score
@@ -559,27 +560,38 @@ if __name__ == "__main__":
                         # UNCOMMENT FOR DEBUGGING: to visualize train results
                         # if epoch in [3,4,5,6,7,29] and train_window_idx[0] == 0:
                         # if epoch in [4, 9, 14, 19, 24, 29, 39, 49, 59, 69, 79, 89, 99]:
-                        # if epoch in [29]:
-                        #     os.makedirs(patch_dir + "/image_result", exist_ok=True)
-                        #     for nbei, bei in enumerate(batch_edge_ids):
-                        #         # Get dates from node and edge mappings
-                        #         src_node_id, dst_node_id = edge_node_pairs[bei-1]
-                        #         src_date = node_mapping.loc[node_mapping['nodeID'] == src_node_id, 'date'].values[0]
-                        #         dst_date = node_mapping.loc[node_mapping['nodeID'] == dst_node_id, 'date'].values[0]
-                        #         src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
-                        #         dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
-                        #         save_name = os.path.join(patch_dir, f"image_result/train_epoch-{epoch+1:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{bei:04d}_{src_date_str}-{dst_date_str}")
-                        #         # Save results
-                        #         gt_flat = edge_raw_features[bei,]
-                        #         gt_img = gt_flat.reshape((args.patch_length,args.patch_length))
-                        #         pred_flat = predicted_edge_feature[nbei,].detach().cpu().numpy()
-                        #         pred_img = pred_flat.reshape((args.patch_length,args.patch_length))
-                        #         np.save(save_name + "_gt.npy", gt_img)
-                        #         np.save(save_name + "_pred.npy", pred_img)
-                        #         # Visualise and plot distributions of results
-                        #         evaluate_image_link_prediction_visualiser(log_patch,args.cor_logit,gt_img,pred_img,save_name)
-                        #         evaluate_image_link_prediction_plot_distributions(log_patch,args.cor_logit,gt_flat,pred_flat,gt_flat-pred_flat,np.abs(gt_flat-pred_flat),save_name)
-                        
+                        if epoch in [39]:
+                            os.makedirs(patch_dir + "/image_result", exist_ok=True)
+                            use_parallel = cpu_count() > 99999  # Use smaller number e.g. 4 instead of 99999 to switch on multiprocessing
+                            tasks_visual = []
+                            tasks_distributions = []
+                            for nbei, bei in enumerate(batch_edge_ids):
+                                # Get dates from node and edge mappings
+                                src_node_id, dst_node_id = edge_node_pairs[bei-1]
+                                src_date = node_mapping.loc[node_mapping['nodeID'] == src_node_id, 'date'].values[0]
+                                dst_date = node_mapping.loc[node_mapping['nodeID'] == dst_node_id, 'date'].values[0]
+                                src_date_str = pd.to_datetime(src_date).strftime('%Y%m%d')
+                                dst_date_str = pd.to_datetime(dst_date).strftime('%Y%m%d')
+                                save_name = os.path.join(patch_dir, f"image_result/train_epoch-{epoch+1:04d}_src-{src_node_id:04d}_dst-{dst_node_id:04d}_edge-{bei:04d}_{src_date_str}-{dst_date_str}")
+                                # Save results
+                                gt_flat = edge_raw_features[bei,]
+                                gt_img = gt_flat.reshape((args.patch_length,args.patch_length))
+                                pred_flat = predicted_edge_feature[nbei,].detach().cpu().numpy()
+                                pred_img = pred_flat.reshape((args.patch_length,args.patch_length))
+                                np.save(save_name + "_gt.npy", gt_img)
+                                np.save(save_name + "_pred.npy", pred_img)
+                                # Visualise and plot distributions of results
+                                if use_parallel:  # If many CPUs are available, create tuple for multiprocessing
+                                    tasks_visual.append((log_patch, args.cor_logit, gt_img, pred_img, save_name))
+                                    tasks_distributions.append((log_patch, args.cor_logit, gt_flat, pred_flat, gt_flat-pred_flat, np.abs(gt_flat-pred_flat), save_name))
+                                else:  # If only few CPUs are available, use sequential processing
+                                    evaluate_image_link_prediction_visualiser(log_patch,args.cor_logit,gt_img,pred_img,save_name)
+                                    evaluate_image_link_prediction_plot_distributions(log_patch,args.cor_logit,gt_flat,pred_flat,gt_flat-pred_flat,np.abs(gt_flat-pred_flat),save_name)
+                            if use_parallel:  # If many CPUs are available, use parallel processing
+                                with Pool(cpu_count()) as pool:
+                                    pool.starmap(evaluate_image_link_prediction_visualiser, tasks_visual)
+                                    pool.starmap(evaluate_image_link_prediction_plot_distributions, tasks_distributions)
+
                         # Append losses to the storage arrays
                         train_losses.append(train_loss.item())
                         train_metrics.append({'Training MAE loss': train_loss.item()})
@@ -624,19 +636,19 @@ if __name__ == "__main__":
                 ########## VALIDATION ##########
                 
                 log_patch.info(f"********** PATCH {patch_id + 1:05d} | RUN {run + 1} | EPOCH {epoch + 1} | VALIDATION **********")
-                visualize_flag = False
-                distributions_all_flag = False
-                distributions_flag = False
                 save_numpy_objects_flag = False
+                visualize_flag = False
+                distributions_flag = False
+                distributions_all_flag = False
                 
                 # UNCOMMENT FOR DEBUGGING: Visualise and plot distributions of the validation results
-                # if epoch in [29]:
-                if epoch in [0, 4, 9, 14, 19, 24, 29, 39, 49, 59, 69, 79, 89, 99]:
-                    visualize_flag = True
-                    distributions_all_flag = True
-                    distributions_flag = True
+                if epoch in [39]:
+                # if epoch in [0, 4, 9, 14, 19, 24, 29, 39, 49, 59, 69, 79, 89, 99]:
                     save_numpy_objects_flag = True
-                    
+                    visualize_flag = True
+                    distributions_flag = True
+                    distributions_all_flag = True
+
                 # Validate as per normal without visualizing
                 val_metrics = evaluate_image_link_prediction_without_dataloader(logger=log_patch,
                                                                             model_name=args.model_name,
@@ -656,10 +668,10 @@ if __name__ == "__main__":
                                                                             l1_regularisation_lambda=args.l1_regularisation_lambda,
                                                                             l2_regularisation_lambda=args.l2_regularisation_lambda,
                                                                             cor_logit=args.cor_logit,
+                                                                            save_numpy_objects=save_numpy_objects_flag,
                                                                             visualize=visualize_flag,
-                                                                            distributions_all=distributions_all_flag,
                                                                             distributions=distributions_flag,
-                                                                            save_numpy_objects_flag=save_numpy_objects_flag,
+                                                                            distributions_all=distributions_all_flag,
                                                                             epoch=epoch+1)
                     
                 if args.model_name in ['JODIE', 'DyRep', 'TGN']:
@@ -716,10 +728,10 @@ if __name__ == "__main__":
                                                                             l1_regularisation_lambda=args.l1_regularisation_lambda,
                                                                             l2_regularisation_lambda=args.l2_regularisation_lambda,
                                                                             cor_logit=args.cor_logit,
+                                                                            save_numpy_objects=True,
                                                                             visualize=True,
-                                                                            distributions_all=True,
                                                                             distributions=True,
-                                                                            save_numpy_objects_flag=True,
+                                                                            distributions_all=True,
                                                                             epoch=epoch+1)
 
             # exit(0)
