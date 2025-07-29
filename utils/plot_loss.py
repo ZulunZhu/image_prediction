@@ -1,48 +1,103 @@
 import re
 import matplotlib.pyplot as plt
 
-# Path to your log file
-log_file = "/Users/cheryltay/Documents/project_dpm5/NoNeighbor_NodeFeatOnly/patch_0004/logs/logger_20250709_214125.log"
+def plot_losses_from_log(log_file: str):
+    # Initialise each type of loss
+    train_loss = []  
+    train_loss_mean = {}
+    val_loss = {}
+    val_loss_mean = {}
+    test_loss = None
+    max_window_index = 0  # Track the highest training window number seen
 
-# Lists to hold the extracted losses
-train_losses = []
-val_losses = []
-test_loss = None  # Initialize test_loss
+    # Patterns
+    train_loss_pattern = re.compile(r"TRAINING LOSS FOR PATCH \d+, RUN \d+, EPOCH (\d+), TRAINING WINDOW (\d+): ([0-9.]+)")
+    train_loss_mean_pattern = re.compile(r"MEAN train MAE loss \(across all windows of current epoch\), RUN \d+, EPOCH (\d+): ([0-9.]+)")
+    val_loss_pattern = re.compile(r"VALIDATION LOSS FOR PATCH \d+, RUN \d+, EPOCH (\d+): ([0-9.]+)")
+    val_loss_mean_pattern = re.compile(r"MEAN val MAE loss \(across 1st epoch to current epoch\), RUN \d+, EPOCH (\d+): ([0-9.]+)")
+    test_loss_pattern = re.compile(r"FINAL test MAE loss \(last epoch\), RUN \d+, EPOCH \d+: ([0-9.]+)")
 
-# Regex patterns
-train_pattern = re.compile(r"train mean Training MAE loss, ([0-9.]+)")
-val_pattern = re.compile(r"validate mean val MAE loss, ([0-9.]+)")
-test_pattern = re.compile(r"test test_end MAE loss, ([0-9.]+)")
+    # Parse log file
+    raw_train_loss = []
+    with open(log_file, 'r') as f:
+        for line in f:
+            # Train loss per window 
+            if match := train_loss_pattern.search(line):
+                epoch = int(match.group(1))
+                window = int(match.group(2))
+                loss = float(match.group(3))
 
-# Read and extract losses
-with open(log_file, 'r') as file:
-    for line in file:
-        train_match = train_pattern.search(line)
-        val_match = val_pattern.search(line)
-        test_match = test_pattern.search(line)
+                if window > max_window_index:
+                    max_window_index = window
 
-        if train_match:
-            train_losses.append(float(train_match.group(1)))
-        if val_match:
-            val_losses.append(float(val_match.group(1)))
-        if test_match and test_loss is None:  # Capture only the first test loss
-            test_loss = float(test_match.group(1))
+                raw_train_loss.append((epoch, window, loss))
+                continue
 
-# Plotting
-plt.figure(figsize=(8, 6))
-plt.plot(train_losses, label='Training MAE Loss', marker='o')
-plt.plot(val_losses, label='Validation MAE Loss', marker='x')
+            # Train loss per epoch (mean across all windows)
+            if match := train_loss_mean_pattern.search(line):
+                epoch = int(match.group(1))
+                loss = float(match.group(2))
+                train_loss_mean[epoch] = loss
+                continue
 
-# Add test loss as a horizontal line if found
-if test_loss is not None:
-    plt.axhline(y=test_loss, color='red', linestyle='--', label=f'Test MAE Loss = {test_loss:.4f}')
+            # Validation loss per epoch
+            if match := val_loss_pattern.search(line):
+                epoch = int(match.group(1))
+                loss = float(match.group(2))
+                val_loss[epoch] = loss
+                continue
 
-plt.ylim(0, 0.45)
-plt.xlabel("Epoch", fontsize=20)
-plt.ylabel("MAE Loss", fontsize=20)
-plt.legend(fontsize=18)
-plt.grid(True)
-plt.xticks(fontsize=18)
-plt.yticks(fontsize=18)
-plt.tight_layout()
-plt.savefig(log_file.replace('.log', '_loss_plot.png'))
+            # Validation loss per epoch (mean across epochs so far)
+            if match := val_loss_mean_pattern.search(line):
+                epoch = int(match.group(1))
+                loss = float(match.group(2))
+                val_loss_mean[epoch] = loss
+                continue
+
+            # Test loss
+            if match := test_loss_pattern.search(line):
+                if test_loss is None:
+                    test_loss = float(match.group(1))
+
+    # Compute fractional epoch values
+    train_loss = [((epoch - 1) + window / max_window_index, loss) for epoch, window, loss in raw_train_loss]
+
+    # Sort and unpack
+    train_loss.sort()
+    x_train, y_train = zip(*train_loss) if train_loss else ([], [])
+    all_epochs = sorted(set(train_loss_mean) | set(val_loss) | set(val_loss_mean))
+    x_epochs = list(all_epochs)
+    y_train_mean = [train_loss_mean.get(e, None) for e in x_epochs]
+    y_val = [val_loss.get(e, None) for e in x_epochs]
+    y_val_mean = [val_loss_mean.get(e, None) for e in x_epochs]
+
+    # Construct labels using final values for each curve
+    final_epoch = x_epochs[-1] if x_epochs else None
+    final_train_mean = train_loss_mean.get(final_epoch)
+    final_val = val_loss.get(final_epoch)
+    final_val_mean = val_loss_mean.get(final_epoch)
+    train_mean_label = "Training loss, mean across windows of an epoch" + f" (final = {final_train_mean:.4f})"
+    val_label = "Validation loss" + f" (final = {final_val:.4f})"
+    val_mean_label = "Validation loss, mean across epochs" + f" (final = {final_val_mean:.4f})"
+
+    # Plotting
+    plt.figure(figsize=(12, 7))
+    
+    plt.plot(x_train, y_train, label="Training loss", color='gray', linestyle='-', alpha=0.6)
+    plt.plot(x_epochs, y_train_mean, label=train_mean_label, marker='o')
+    plt.plot(x_epochs, y_val, label=val_label, marker='x')
+    plt.plot(x_epochs, y_val_mean, label=val_mean_label, marker='^')
+    plt.axhline(y=test_loss, color='red', linestyle='--', label=f'Test loss = {test_loss:.4f}')
+
+    plt.xlabel("Epoch", fontsize=16)
+    plt.ylabel("Loss", fontsize=16)
+    plt.xlim(left=0)
+    plt.grid(True)
+    plt.legend(fontsize=12)
+    plt.xticks(fontsize=12)
+    plt.yticks(fontsize=12)
+    plt.tight_layout()
+
+    output_path = log_file.replace('.log', '_loss_plot.png')
+    plt.savefig(output_path)
+    print(f"Plot saved to: {output_path}")

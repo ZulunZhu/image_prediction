@@ -33,6 +33,7 @@ from utils.temporal_shifting import find_furthest_node_within_temporal_baseline
 from utils.EarlyStopping import EarlyStopping
 from utils.load_configs import get_link_prediction_args
 from utils.cor_logit_space import cor_to_logit, logit_to_cor, convert_images_to_reg_cor
+from utils.plot_loss import plot_losses_from_log
                                 
 
 if __name__ == "__main__":
@@ -119,11 +120,12 @@ if __name__ == "__main__":
         # Set up logger for this patch 
         patch_log_dir = patch_dir + '/patch_logs'
         os.makedirs(patch_log_dir, exist_ok=True)
+        patch_log_file = os.path.join(patch_log_dir, f"patch_logger_{time.strftime('%Y%m%d_%H%M%S')}.log")
         log_patch = logging.getLogger("LogPatch")
         log_patch.setLevel(logging.DEBUG)
         log_patch.handlers = []  # Clear any existing handlers
         formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
-        fh = logging.FileHandler(os.path.join(patch_log_dir, f"patch_logger_{time.strftime('%Y%m%d_%H%M%S')}.log"))  # Create file handler 
+        fh = logging.FileHandler(patch_log_file)  # Create file handler 
         fh.setLevel(logging.DEBUG)
         fh.setFormatter(formatter)
         log_patch.addHandler(fh)
@@ -580,21 +582,21 @@ if __name__ == "__main__":
                                 pred_img = pred_flat.reshape((args.patch_length,args.patch_length))
                                 np.save(save_name + "_gt.npy", gt_img)
                                 np.save(save_name + "_pred.npy", pred_img)
-                                # Visualise and plot distributions of results
-                                if use_parallel:  # If many CPUs are available, create tuple for multiprocessing
-                                    tasks_visual.append((log_patch, args.cor_logit, gt_img, pred_img, save_name))
-                                    tasks_distributions.append((log_patch, args.cor_logit, gt_flat, pred_flat, gt_flat-pred_flat, np.abs(gt_flat-pred_flat), save_name))
-                                else:  # If only few CPUs are available, use sequential processing
-                                    evaluate_image_link_prediction_visualiser(log_patch,args.cor_logit,gt_img,pred_img,save_name)
-                                    evaluate_image_link_prediction_plot_distributions(log_patch,args.cor_logit,gt_flat,pred_flat,gt_flat-pred_flat,np.abs(gt_flat-pred_flat),save_name)
-                            if use_parallel:  # If many CPUs are available, use parallel processing
-                                with Pool(cpu_count()) as pool:
-                                    pool.starmap(evaluate_image_link_prediction_visualiser, tasks_visual)
-                                    pool.starmap(evaluate_image_link_prediction_plot_distributions, tasks_distributions)
+                            #     # Visualise and plot distributions of results
+                            #     if use_parallel:  # If many CPUs are available, create tuple for multiprocessing
+                            #         tasks_visual.append((log_patch, args.cor_logit, gt_img, pred_img, save_name))
+                            #         tasks_distributions.append((log_patch, args.cor_logit, gt_flat, pred_flat, gt_flat-pred_flat, np.abs(gt_flat-pred_flat), save_name))
+                            #     else:  # If only few CPUs are available, use sequential processing
+                            #         evaluate_image_link_prediction_visualiser(log_patch,args.cor_logit,gt_img,pred_img,save_name)
+                            #         evaluate_image_link_prediction_plot_distributions(log_patch,args.cor_logit,gt_flat,pred_flat,gt_flat-pred_flat,np.abs(gt_flat-pred_flat),save_name)
+                            # if use_parallel:  # If many CPUs are available, use parallel processing
+                            #     with Pool(cpu_count()) as pool:
+                            #         pool.starmap(evaluate_image_link_prediction_visualiser, tasks_visual)
+                            #         pool.starmap(evaluate_image_link_prediction_plot_distributions, tasks_distributions)
 
                         # Append losses to the storage arrays
                         train_losses.append(train_loss.item())
-                        train_metrics.append({'Training MAE loss': train_loss.item()})
+                        train_metrics.append({'train MAE loss': train_loss.item()})
                         if args.cor_logit and args.l1_regularisation_lambda == 0 and args.l2_regularisation_lambda == 0:
                             train_losses_reg_cor.append(train_loss_reg_cor.item())
                             train_metrics_reg_cor.append({'Training MAE loss (Raw Coherence)': train_loss_reg_cor.item()})
@@ -645,9 +647,9 @@ if __name__ == "__main__":
                 if epoch in [39]:
                 # if epoch in [0, 4, 9, 14, 19, 24, 29, 39, 49, 59, 69, 79, 89, 99]:
                     save_numpy_objects_flag = True
-                    visualize_flag = True
-                    distributions_flag = True
-                    distributions_all_flag = True
+                    visualize_flag = False
+                    distributions_flag = False
+                    distributions_all_flag = False
 
                 # Validate as per normal without visualizing
                 val_metrics = evaluate_image_link_prediction_without_dataloader(logger=log_patch,
@@ -684,9 +686,9 @@ if __name__ == "__main__":
                 # Logging average training and validation losses
                 log_patch.info(f'Number of epochs: {epoch + 1}, learning rate: {optimizer.param_groups[0]["lr"]}, mean train loss: {np.mean(train_losses):.4f}')
                 for metric_name in train_metrics[0].keys():
-                    log_patch.info(f'train mean {metric_name}, {np.mean([train_metric[metric_name] for train_metric in train_metrics]):.4f}')
+                    log_patch.info(f'MEAN {metric_name} (across all windows of current epoch), RUN {run + 1}, EPOCH {epoch + 1}: {np.mean([train_metric[metric_name] for train_metric in train_metrics]):.4f}')
                 for metric_name in val_metrics[0].keys():
-                    log_patch.info(f'validate mean {metric_name}, {np.mean([val_metric[metric_name] for val_metric in val_metrics]):.4f}')
+                    log_patch.info(f'MEAN {metric_name} (across 1st epoch to current epoch), RUN {run + 1}, EPOCH {epoch + 1}: {np.mean([val_metric[metric_name] for val_metric in val_metrics]):.4f}')
 
                 # Select the best model based on all types of validate metrics
                 # For L1 MAE loss, lower is better, so use 'False' in val_metric_indicator for early stopping
@@ -716,7 +718,7 @@ if __name__ == "__main__":
                                                                             neighbor_sampler=full_neighbor_sampler,
                                                                             edge_ids_array=test_data.edge_ids,
                                                                             evaluate_data=test_data,
-                                                                            eval_stage='test_end',
+                                                                            eval_stage='test',
                                                                             eval_metric_name=eval_metric_name,
                                                                             evaluator=evaluator,
                                                                             evaluate_metrics=test_metrics,
@@ -729,9 +731,9 @@ if __name__ == "__main__":
                                                                             l2_regularisation_lambda=args.l2_regularisation_lambda,
                                                                             cor_logit=args.cor_logit,
                                                                             save_numpy_objects=True,
-                                                                            visualize=True,
-                                                                            distributions=True,
-                                                                            distributions_all=True,
+                                                                            visualize=False,
+                                                                            distributions=False,
+                                                                            distributions_all=False,
                                                                             epoch=epoch+1)
 
             # exit(0)
@@ -741,13 +743,13 @@ if __name__ == "__main__":
             if args.model_name not in ['JODIE', 'DyRep', 'TGN']:
                 for metric_name in val_metrics[0].keys():
                     average_val_metric = np.mean([val_metric[metric_name] for val_metric in val_metrics])
-                    log_patch.info(f'validate {metric_name}, {average_val_metric:.4f}')
                     val_metric_dict[metric_name] = average_val_metric
+                    log_patch.info(f'FINAL {metric_name} (last epoch), RUN {run + 1}, EPOCH {epoch + 1}: {val_metrics[-1][metric_name]:.4f}')
 
             for metric_name in test_metrics[0].keys():
                 average_test_metric = np.mean([test_metric[metric_name] for test_metric in test_metrics])
-                log_patch.info(f'test {metric_name}, {average_test_metric:.4f}')
                 test_metric_dict[metric_name] = average_test_metric
+                log_patch.info(f'FINAL {metric_name} (last epoch), RUN {run + 1}, EPOCH {epoch + 1}: {average_test_metric:.4f}')  # Note there is only 1 test loss by the end of all epochs
 
             single_run_time = time.time() - run_start_time
             log_patch.info(f'PATCH {patch_id + 1:05d} RUN {run + 1} takes {single_run_time:.3f} seconds.')
@@ -780,16 +782,18 @@ if __name__ == "__main__":
 
         if args.model_name not in ['JODIE', 'DyRep', 'TGN']:
             for metric_name in val_metric_all_runs[0].keys():
-                log_patch.info(f'validate {metric_name}, {[val_metric_single_run[metric_name] for val_metric_single_run in val_metric_all_runs]}')
-                log_patch.info(f'AVERAGE validate {metric_name}, {np.mean([val_metric_single_run[metric_name] for val_metric_single_run in val_metric_all_runs]):.4f} '
-                            f'± {np.std([val_metric_single_run[metric_name] for val_metric_single_run in val_metric_all_runs], ddof=1):.4f}')
+                all_runs = [val_metric_single_run[metric_name] for val_metric_single_run in val_metric_all_runs]
+                all_runs_formatted = [f"{val:.4f}" for val in all_runs]
+                log_patch.info(f'ALL RUNS {metric_name}, {all_runs_formatted}')
+                log_patch.info(f'ALL RUNS (MEAN) {metric_name}, {np.mean(all_runs):.4f} ± {np.std(all_runs, ddof=1):.4f}')
 
         for metric_name in test_metric_all_runs[0].keys():
-            log_patch.info(f'test {metric_name}, {[test_metric_single_run[metric_name] for test_metric_single_run in test_metric_all_runs]}')
-            log_patch.info(f'AVERAGE test {metric_name}, {np.mean([test_metric_single_run[metric_name] for test_metric_single_run in test_metric_all_runs]):.4f} '
-                        f'± {np.std([test_metric_single_run[metric_name] for test_metric_single_run in test_metric_all_runs], ddof=1):.4f}')
+            all_runs = [test_metric_single_run[metric_name] for test_metric_single_run in test_metric_all_runs]
+            all_runs_formatted = [f"{val:.4f}" for val in all_runs]
+            log_patch.info(f'ALL RUNS {metric_name}, {all_runs_formatted}')
+            log_patch.info(f'ALL RUNS (MEAN) {metric_name}, {np.mean(all_runs):.4f} ± {np.std(all_runs, ddof=1):.4f}')
         
-        # Stitch new patch to the merged image for each edge predicted using mean/min/max
+        # Stitch new patch to the merged image for each edge predicted using mean/min/max (deprecated!)
         # if args.stitch_method == 'mean':
         #     pred_dir = os.path.join(patch_dir, 'image_result')
         #     for pred_file in sorted([f for f in os.listdir(pred_dir) if f.startswith("test_end_") and f.endswith("_pred.npy")]): 
@@ -800,6 +804,9 @@ if __name__ == "__main__":
         #     else:
         #         log_main.warning(f'WARNING: No merged image created in {merged_dir} using the {args.stitch_method.upper()} method. Please check the patch result directories.\n\n')
 
+        # Plot losses from logs at the end of patch processing
+        plot_losses_from_log(patch_log_file)
+        
         os.chdir(work_dir)
 
     # Stitch all patches to create merged image for each edge predicted using median 
