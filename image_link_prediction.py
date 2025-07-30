@@ -816,7 +816,7 @@ if __name__ == "__main__":
             stitchPatchMedian(log_main, args.cor_logit, data_dir, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
         for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("val_") and f.endswith("_pred_cor-raw.npy")]): # Get unique val _pred_cor-raw.npy files from the first patch folder as a reference
             stitchPatchMedian(log_main, args.cor_logit, data_dir, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
-        for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("test_end_") and f.endswith("_pred_cor-raw.npy")]): # Get unique test _pred_cor-raw.npy files from the first patch folder as a reference
+        for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("test_") and f.endswith("_pred_cor-raw.npy")]): # Get unique test _pred_cor-raw.npy files from the first patch folder as a reference
             stitchPatchMedian(log_main, args.cor_logit, data_dir, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
         # Stitch additional logit_cor images if they were used
         if args.cor_logit:
@@ -824,7 +824,7 @@ if __name__ == "__main__":
                 stitchPatchMedian(log_main, args.cor_logit, data_dir, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
             for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("val_") and f.endswith("_pred_cor-logit.npy")]): # Get unique val _pred_cor-logit.npy files from the first patch folder as a reference
                 stitchPatchMedian(log_main, args.cor_logit, data_dir, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
-            for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("test_end_") and f.endswith("_pred_cor-logit.npy")]): # Get unique test _pred_cor-logit.npy files from the first patch folder as a reference
+            for pred_file in sorted([f for f in os.listdir(f"{patch_dirs[0]}/image_result") if f.startswith("test_") and f.endswith("_pred_cor-logit.npy")]): # Get unique test _pred_cor-logit.npy files from the first patch folder as a reference
                 stitchPatchMedian(log_main, args.cor_logit, data_dir, merged_dir, patchList, pred_file, x, y, args.stitch_chunk_size)
         # Check if the merged image was created successfully
         if (merged_img_count := sum("pred_merged_img.npy" in f for f in os.listdir(merged_dir))):
